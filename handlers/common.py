@@ -23,7 +23,7 @@ TEXTS = {
             '- Самса с тыквой (сезонная)\n'
             '- Скидка 10% при оплате через Payme'
         ),
-        'working_hours': 'Заказы принимаем с 9:00 до 19:00. Доставка по Ташкенту — 1–2 часа.',
+        'working_hours': 'Заказы принимаем с 9:00 до 17:00. Доставка по Ташкенту — 1–2 часа.',
         'payments': 'Оплатить наличными или картой через Payme (100% предоплата со скидкой).',
         'repeat_unavailable': 'У вас ещё нет предыдущих заказов.',
         'ask_review': 'Оставьте отзыв (текст или голосовое).',
@@ -136,7 +136,7 @@ TEXTS = {
             '- Qovoqli somsa (fasliy)\n'
             '- Payme orqali to‘lovda 10% chegirma'
         ),
-        'working_hours': 'Buyurtmalar 9:00–19:00 qabul qilinadi. Toshkent bo‘ylab 1–2 soat ichida yetkazib beramiz.',
+        'working_hours': 'Buyurtmalar 9:00–17:00 qabul qilinadi. Toshkent bo‘ylab 1–2 soat ichida yetkazib beramiz.',
         'payments': 'Naqd yoki Payme orqali (100% oldindan to‘lov, chegirma bilan).',
         'repeat_unavailable': 'Avvalgi buyurtmangiz yo‘q.',
         'ask_review': 'Fikr-mulohazangizni matn yoki ovozli xabar sifatida yuboring.',
@@ -256,11 +256,12 @@ async def init_bot_data(app):
         app.bot_data['avail'] = load_local_availability()
     
     t = app.bot_data['texts']
-    # build keyboards - horizontal layout for better UI
+    # build keyboards - 2 buttons per row layout
     main_keyboard = [
-        [t['btn_order'], t['btn_reviews'], t['cart_button']],
-        [t['btn_promo'], t['btn_hours'], "📞 Контакты"],
-        [t['btn_language'], t['btn_help'], "📝 Оставить отзыв"],
+        [t['btn_order'], "📞 Контакты"],
+        [t['btn_hours'], t['btn_promo']],
+        [t['btn_reviews'], "📝 Оставить отзыв"],
+        [t['btn_help'], t['btn_language']],
     ]
     app.bot_data['keyb'] = {
         'main': ReplyKeyboardMarkup(main_keyboard, resize_keyboard=True),
@@ -300,12 +301,13 @@ async def handle_language_choice(update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text('Пожалуйста, выберите "ru" или "uz".')
     context.bot_data['lang'] = choice
     context.bot_data['texts'] = TEXTS[choice]
-    # rebuild keyboards - horizontal layout for better UI
+    # rebuild keyboards - 2 buttons per row layout
     t = context.bot_data['texts']
     main_keyboard = [
-        [t['btn_order'], t['btn_reviews'], t['cart_button']],
-        [t['btn_promo'], t['btn_hours'], "📞 Контакты"],
-        [t['btn_language'], t['btn_help'], "📝 Оставить отзыв"],
+        [t['btn_order'], "📞 Контакты"],
+        [t['btn_hours'], t['btn_promo']],
+        [t['btn_reviews'], "📝 Оставить отзыв"],
+        [t['btn_help'], t['btn_language']],
     ]
     context.bot_data['keyb'] = {
         'main': ReplyKeyboardMarkup(main_keyboard, resize_keyboard=True),
@@ -318,30 +320,77 @@ async def help_command(update, context: ContextTypes.DEFAULT_TYPE):
     lang = context.bot_data.get('lang', 'ru')
     
     if lang == 'ru':
-        cmds = [
-            f"{t['btn_order']} — новый заказ",
-            f"{t['btn_reviews']} — отзывы",
-            f"{t['btn_about']} — о нас",
-            f"{t['btn_promo']} — акции",
-            f"{t['btn_hours']} — время работы",
-            f"{t['btn_payments']} — оплата",
-            f"{t['btn_repeat']} — повтор заказа",
-            f"{t['btn_language']} — сменить язык",
-            f"{t['btn_help']} — помощь",
-        ]
+        help_text = """🤖 <b>Помощь по боту Samsariya</b>
+
+<b>📱 Меню бота:</b>
+🛒 <b>Сделать заказ</b> — Начать новый заказ самсы
+📞 <b>Контакты</b> — Наши телефоны, адрес и время работы
+⏰ <b>Время работы</b> — Когда мы принимаем заказы (9:00-17:00)
+🔥 <b>Акции</b> — Текущие скидки и специальные предложения
+💬 <b>Отзывы</b> — Читать отзывы других клиентов
+📝 <b>Оставить отзыв</b> — Поделиться своим мнением
+❓ <b>Помощь</b> — Эта справка
+🌐 <b>Язык</b> — Переключить на русский/узбекский
+
+<b>🛒 Как заказать:</b>
+1️⃣ Нажмите "Сделать заказ"
+2️⃣ Выберите самсу и количество
+3️⃣ Добавьте упаковку (обязательно)
+4️⃣ Укажите свои данные (имя, телефон, адрес)
+5️⃣ Выберите способ получения
+6️⃣ Выберите время доставки
+7️⃣ Выберите способ оплаты
+8️⃣ Подтвердите заказ
+
+<b>📊 Статусы заказа:</b>
+✅ <b>Принят</b> — Ваш заказ получен и обрабатывается
+🔄 <b>В процессе</b> — Самса готовится
+🍽️ <b>Готов</b> — Заказ готов к выдаче/доставке
+✅ <b>Завершен</b> — Заказ доставлен/выдан
+❌ <b>Отменен</b> — Заказ отменен
+
+<b>💡 Полезные советы:</b>
+• Заказы принимаем с 9:00 до 17:00
+• Доставка по Ташкенту 1-2 часа
+• Оплата наличными или картой
+• Скидка 10% при оплате через Payme"""
     else:  # uz
-        cmds = [
-            f"{t['btn_order']} — yangi buyurtma",
-            f"{t['btn_reviews']} — sharhlar",
-            f"{t['btn_about']} — biz haqimizda",
-            f"{t['btn_promo']} — aksiyalar",
-            f"{t['btn_hours']} — ish vaqti",
-            f"{t['btn_payments']} — toʻlov",
-            f"{t['btn_repeat']} — qayta buyurtma",
-            f"{t['btn_language']} — tilni oʻzgartirish",
-            f"{t['btn_help']} — yordam",
-        ]
-    await update.message.reply_text('\n'.join(cmds))
+        help_text = """🤖 <b>Samsariya bot yordami</b>
+
+<b>📱 Bot menyusi:</b>
+🛒 <b>Buyurtma berish</b> — Yangi somsa buyurtmasi
+📞 <b>Aloqa</b> — Telefon raqamlarimiz, manzil va ish vaqti
+⏰ <b>Ish vaqti</b> — Buyurtma qabul qilish vaqti (9:00-17:00)
+🔥 <b>Aksiyalar</b> — Joriy chegirmalar va maxsus takliflar
+💬 <b>Sharhlar</b> — Boshqa mijozlarning fikrlari
+📝 <b>Sharh qoldirish</b> — O'z fikringizni bildiring
+❓ <b>Yordam</b> — Bu yordam
+🌐 <b>Til</b> — Rus/ozbek tiliga o'tish
+
+<b>🛒 Qanday buyurtma berish:</b>
+1️⃣ "Buyurtma berish"ni bosing
+2️⃣ Somsa va miqdorni tanlang
+3️⃣ Ompordagi qo'shing 
+4️⃣ Ma'lumotlaringizni kiriting (ism, telefon, manzil)
+5️⃣ Olish usulini tanlang
+6️⃣ Yetkazib berish vaqtini tanlang
+7️⃣ To'lov usulini tanlang
+8️⃣ Buyurtmani tasdiqlang
+
+<b>📊 Buyurtma holatlari:</b>
+✅ <b>Qabul qilindi</b> — Buyurtmangiz qabul qilindi va qayta ishlanmoqda
+🔄 <b>Jarayonda</b> — Somsa tayyorlanmoqda
+🍽️ <b>Tayyor</b> — Buyurtma berish/etkazib berish uchun tayyor
+✅ <b>Yakunlandi</b> — Buyurtma yetkazib berildi/berildi
+❌ <b>Bekor qilindi</b> — Buyurtma bekor qilindi
+
+<b>💡 Foydali maslahatlar:</b>
+• Buyurtmalar 9:00-17:00 qabul qilinadi
+• Toshkent bo'ylab 1-2 soat ichida yetkazib beramiz
+• Naqd yoki karta orqali to'lov
+• Payme orqali to'lovda 10% chegirma"""
+    
+    await update.message.reply_text(help_text, parse_mode='HTML', reply_markup=context.bot_data['keyb']['main'])
 
 async def main_menu(update, context: ContextTypes.DEFAULT_TYPE):
     t = context.bot_data['texts']

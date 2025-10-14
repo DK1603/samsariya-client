@@ -39,71 +39,91 @@ async def remind_unfinished(context):
 
 
 async def order_start(update, context):
-    # Temporarily disabled working hours restriction for 24/7 operation
-    # now_hour = datetime.now().hour
-    # target = update.message or (update.callback_query.message if update.callback_query else None)
-    # if not (WORK_START_HOUR <= now_hour < WORK_END_HOUR):
-    #     if target:
-    #         await target.reply_text(
-    #             context.bot_data['texts']['off_hours_preorder'],
-    #             reply_markup=context.bot_data['keyb']['main']
-    #         )
-    #     return
-    
-    target = update.message or (update.callback_query.message if update.callback_query else None)
-    user_id = update.effective_user.id
-    
-    # Check for existing temp cart
     try:
-        temp_cart = await load_temp_cart(user_id)
-    except Exception as e:
-        logging.error(f"Error loading temp cart in order_start: {e}")
-        temp_cart = None
+        # Temporarily disabled working hours restriction for 24/7 operation
+        # now_hour = datetime.now().hour
+        # target = update.message or (update.callback_query.message if update.callback_query else None)
+        # if not (WORK_START_HOUR <= now_hour < WORK_END_HOUR):
+        #     if target:
+        #         await target.reply_text(
+        #             context.bot_data['texts']['off_hours_preorder'],
+        #             reply_markup=context.bot_data['keyb']['main']
+        #         )
+        #     return
+        
+        target = update.message or (update.callback_query.message if update.callback_query else None)
+        user_id = update.effective_user.id
+        
+        # Check for existing temp cart
+        try:
+            temp_cart = await load_temp_cart(user_id)
+        except Exception as e:
+            logging.error(f"Error loading temp cart in order_start: {e}")
+            temp_cart = None
     
-    if temp_cart and has_meaningful_cart(temp_cart.get('items', {})):
-        # Show choice: continue with previous cart or start fresh
-        items = temp_cart.get('items', {})
-        samsa_items = {k: v for k, v in items.items() if k in SAMSA_KEYS and v > 0}
-        packaging_items = {k: v for k, v in items.items() if k in PACKAGING_KEYS and v > 0}
+        if temp_cart and has_meaningful_cart(temp_cart.get('items', {})):
+            # Show choice: continue with previous cart or start fresh
+            items = temp_cart.get('items', {})
+            samsa_items = {k: v for k, v in items.items() if k in SAMSA_KEYS and v > 0}
+            packaging_items = {k: v for k, v in items.items() if k in PACKAGING_KEYS and v > 0}
+            
+            # Build cart summary with fallback text
+            try:
+                summary = f"🛒 <b>{get_text(context, 'cart_saved')}</b>\n\n"
+                summary += f"<b>🥟 {get_text(context, 'samsa_section')}</b>\n"
+                for key, qty in samsa_items.items():
+                    summary += f"• {get_short_name(context, key)} — {qty} шт\n"
+                
+                if packaging_items:
+                    summary += f"\n<b>📦 {get_text(context, 'packaging_section')}</b>\n"
+                    for key, qty in packaging_items.items():
+                        summary += f"• {get_short_name(context, key)} — {qty} шт\n"
+                
+                total = temp_cart.get('total', 0)
+                summary += f"\n💰 <b>{get_text(context, 'total_section')}</b> {total:,} сум\n\n"
+                summary += get_text(context, 'what_to_do')
+                
+                # Show choice buttons
+                choice_kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton(f'✅ {get_text(context, "continue_cart")}', callback_data='continue_cart')],
+                    [InlineKeyboardButton(f'🆕 {get_text(context, "new_order")}', callback_data='new_cart')]
+                ])
+            except Exception as text_error:
+                logging.error(f"Error building cart summary: {text_error}")
+                # Fallback to simple text
+                summary = "🛒 <b>Сохраненная корзина</b>\n\n"
+                for key, qty in samsa_items.items():
+                    summary += f"• {key} — {qty} шт\n"
+                if packaging_items:
+                    summary += "\n📦 Упаковка:\n"
+                    for key, qty in packaging_items.items():
+                        summary += f"• {key} — {qty} шт\n"
+                total = temp_cart.get('total', 0)
+                summary += f"\n💰 Итого: {total:,} сум\n\nЧто хотите сделать?"
+                
+                choice_kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton('✅ Продолжить заказ', callback_data='continue_cart')],
+                    [InlineKeyboardButton('🆕 Новый заказ', callback_data='new_cart')]
+                ])
+            
+            await target.reply_text(summary, reply_markup=choice_kb, parse_mode='HTML')
+            return ITEM_SELECT  # Wait for user choice
+        else:
+            # Start fresh - no saved cart
+            context.user_data.clear()
         
-        # Build cart summary
-        summary = f"🛒 <b>{get_text(context, 'cart_saved')}</b>\n\n"
-        summary += f"<b>🥟 {get_text(context, 'samsa_section')}</b>\n"
-        for key, qty in samsa_items.items():
-            summary += f"• {get_short_name(context, key)} — {qty} шт\n"
+        # Debug logging
+        logging.info(f"Order start triggered by: {update.message.text if update.message else 'callback'}")
+        logging.info(f"Bot data keys: {list(context.bot_data.keys())}")
+        logging.info(f"Availability data: {context.bot_data.get('avail', 'NOT_FOUND')}")
+        logging.info(f"Conversation handler registered: {hasattr(context, 'conversation_handler')}")
+        logging.info(f"Application handlers count: {len(context.application.handlers) if hasattr(context, 'application') else 'No application'}")
         
-        if packaging_items:
-            summary += f"\n<b>📦 {get_text(context, 'packaging_section')}</b>\n"
-            for key, qty in packaging_items.items():
-                summary += f"• {get_short_name(context, key)} — {qty} шт\n"
-        
-        total = temp_cart.get('total', 0)
-        summary += f"\n💰 <b>{get_text(context, 'total_section')}</b> {total:,} сум\n\n"
-        summary += get_text(context, 'what_to_do')
-        
-        # Show choice buttons
-        choice_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton(f'✅ {get_text(context, "continue_cart")}', callback_data='continue_cart')],
-            [InlineKeyboardButton(f'🆕 {get_text(context, "new_order")}', callback_data='new_cart')]
-        ])
-        
-        await target.reply_text(summary, reply_markup=choice_kb, parse_mode='HTML')
-        return ITEM_SELECT  # Wait for user choice
-    else:
-        # Start fresh - no saved cart
-        context.user_data.clear()
-    
-    # Debug logging
-    logging.info(f"Order start triggered by: {update.message.text if update.message else 'callback'}")
-    logging.info(f"Bot data keys: {list(context.bot_data.keys())}")
-    logging.info(f"Availability data: {context.bot_data.get('avail', 'NOT_FOUND')}")
-    
     # Show menu of samsa types as inline buttons
-    try:
         # Check if availability data is loaded
         if 'avail' not in context.bot_data:
             await target.reply_text(
-                f"❌ {get_text(context, 'menu_unavailable')}",
+                "❌ Меню временно недоступно. Попробуйте позже.",
                 reply_markup=context.bot_data.get('keyb', {}).get('main')
             )
             return ConversationHandler.END
@@ -144,16 +164,24 @@ async def order_start(update, context):
                 reply_markup=ordering_keyboard,
                 parse_mode='HTML'
             )
+            return ITEM_SELECT
         else:
             await update.callback_query.edit_message_text(f'🥟 {get_text(context, "choose_samsa")}', reply_markup=menu_kb)
             return ITEM_SELECT
-        
+            
     except Exception as e:
         logging.error(f"Error in order_start: {e}")
-        await target.reply_text(
-            f"❌ {get_text(context, 'error_occurred')}",
-            reply_markup=context.bot_data.get('keyb', {}).get('main')
-        )
+        logging.error(f"Error type: {type(e)}")
+        logging.error(f"Error details: {str(e)}")
+        import traceback
+        logging.error(f"Traceback: {traceback.format_exc()}")
+        
+        target = update.message or (update.callback_query.message if update.callback_query else None)
+        if target:
+            await target.reply_text(
+                "❌ Произошла ошибка при запуске заказа. Попробуйте позже.",
+                reply_markup=context.bot_data.get('keyb', {}).get('main')
+            )
         return ConversationHandler.END
 
 
@@ -166,6 +194,8 @@ async def select_samsa(update, context):
     
     # Debug logging
     logging.info(f"select_samsa called with data: {q.data}")
+    logging.info(f"Current conversation state: {context.user_data.get('conversation_state', 'None')}")
+    logging.info(f"User data keys: {list(context.user_data.keys())}")
     
     try:
         key = q.data.split(':', 1)[1]
@@ -1651,7 +1681,8 @@ async def cart_command(update, context):
             
             # Otherwise, show interactive cart summary (can edit)
             await show_cart_summary(update, context)
-            return PACKAGING_SELECT  # Return state for conversation handler
+            # Don't return any state - we're not in a conversation when called from main menu
+            return None
         
         # Otherwise, try to load from temp cart (cart command outside conversation)
         temp_cart = await load_temp_cart(user_id)
@@ -1708,6 +1739,61 @@ async def cart_command(update, context):
             parse_mode='HTML'
         )
         return None
+
+
+async def cart_from_main_menu(update, context):
+    """Handle cart button from main menu - should NOT start order conversation"""
+    try:
+        user_id = update.effective_user.id
+        
+        # Try to load from temp cart
+        temp_cart = await load_temp_cart(user_id)
+        
+        if not temp_cart or not has_meaningful_cart(temp_cart.get('items', {})):
+            await update.message.reply_text(
+                "🛒 <b>Ваша корзина пуста</b>\n\n"
+                "Начните оформление заказа, чтобы добавить товары в корзину.",
+                reply_markup=context.bot_data['keyb']['main'],
+                parse_mode='HTML'
+            )
+            return
+        
+        # Show saved cart info (read-only view)
+        items = temp_cart.get('items', {})
+        total = temp_cart.get('total', 0)
+        
+        samsa_items = {k: v for k, v in items.items() if k in SAMSA_KEYS and v > 0}
+        packaging_items = {k: v for k, v in items.items() if k in PACKAGING_KEYS and v > 0}
+        
+        summary = "🛒 <b>Ваша сохраненная корзина:</b>\n\n"
+        
+        if samsa_items:
+            summary += "<b>🥟 Самса:</b>\n"
+            for key, qty in samsa_items.items():
+                summary += f"• {get_display_name(context, key)} — {qty} шт\n"
+            summary += "\n"
+        
+        if packaging_items:
+            summary += "<b>📦 Упаковка:</b>\n"
+            for key, qty in packaging_items.items():
+                summary += f"• {get_display_name(context, key)} — {qty} шт\n"
+            summary += "\n"
+        
+        summary += f"💰 <b>Итого:</b> {total:,} сум\n\n"
+        summary += "💡 Используйте '🛒 Сделать заказ' чтобы продолжить заказ"
+        
+        await update.message.reply_text(
+            summary,
+            reply_markup=context.bot_data['keyb']['main'],
+            parse_mode='HTML'
+        )
+        
+    except Exception as e:
+        logging.error(f"Error in cart_from_main_menu: {e}")
+        await update.message.reply_text(
+            "❌ Произошла ошибка при загрузке корзины. Попробуйте позже.",
+            reply_markup=context.bot_data['keyb']['main']
+        )
 
 
 async def handle_order_interruption(update, context):
@@ -1866,9 +1952,9 @@ order_conv_handler = ConversationHandler(
             CallbackQueryHandler(select_samsa, pattern=r'^samsa:'),
             CallbackQueryHandler(finish_menu, pattern=r'^done_menu$'),
             # Handle keyboard buttons during item selection
-            MessageHandler(filters.Regex('^✅ Завершить заказ$'), finish_menu_from_keyboard),
-            MessageHandler(filters.Regex('^❌ Отменить заказ$'), cancel_order),
-            MessageHandler(filters.Regex('^🛒 Корзина$'), cart_command),
+            MessageHandler(filters.Regex('^✅ (Завершить заказ|Buyurtmani yakunlash)$'), finish_menu_from_keyboard),
+            MessageHandler(filters.Regex('^❌ (Отменить заказ|Buyurtmani bekor qilish)$'), cancel_order),
+            MessageHandler(filters.Regex('^🛒 (Корзина|Savat)$'), cart_command),
             # Block all other side buttons
             MessageHandler(
                 filters.Regex('^(💬 Отзывы|ℹ️ О нас|🔥 Акции|⏰ Время работы|🌐 Язык|❓ Помощь|📞 Контакты|📝 Оставить отзыв|🇷🇺 Русский|🇺🇿 O\'zbek)$'),
@@ -1885,9 +1971,9 @@ order_conv_handler = ConversationHandler(
             CallbackQueryHandler(back_to_cart, pattern=r'^back_to_cart$'),
             CallbackQueryHandler(noop, pattern=r'^noop$'),
             # Handle keyboard buttons during item editing
-            MessageHandler(filters.Regex('^✅ Завершить заказ$'), finish_menu_from_keyboard),
-            MessageHandler(filters.Regex('^❌ Отменить заказ$'), cancel_order),
-            MessageHandler(filters.Regex('^🛒 Корзина$'), cart_command),
+            MessageHandler(filters.Regex('^✅ (Завершить заказ|Buyurtmani yakunlash)$'), finish_menu_from_keyboard),
+            MessageHandler(filters.Regex('^❌ (Отменить заказ|Buyurtmani bekor qilish)$'), cancel_order),
+            MessageHandler(filters.Regex('^🛒 (Корзина|Savat)$'), cart_command),
             # Block all other side buttons
             MessageHandler(
                 filters.Regex('^(💬 Отзывы|ℹ️ О нас|🔥 Акции|⏰ Время работы|🌐 Язык|❓ Помощь|📞 Контакты|📝 Оставить отзыв|🇷🇺 Русский|🇺🇿 O\'zbek)$'),
@@ -1904,7 +1990,7 @@ order_conv_handler = ConversationHandler(
             CallbackQueryHandler(finish_menu, pattern=r'^done_menu$'),
             # Handle keyboard buttons
             MessageHandler(filters.Regex('^❌ Отменить заказ$'), cancel_order),
-            MessageHandler(filters.Regex('^🛒 Корзина$'), cart_command),
+            MessageHandler(filters.Regex('^🛒 (Корзина|Savat)$'), cart_command),
             # Block all other side buttons
             MessageHandler(
                 filters.Regex('^(💬 Отзывы|ℹ️ О нас|🔥 Акции|⏰ Время работы|🌐 Язык|❓ Помощь|📞 Контакты|📝 Оставить отзыв|🇷🇺 Русский|🇺🇿 O\'zbek|✅ Завершить заказ)$'),
@@ -1913,7 +1999,7 @@ order_conv_handler = ConversationHandler(
         ],
         NAME:       [
             MessageHandler(filters.Regex('^❌ Отменить заказ$'), cancel_order),
-            MessageHandler(filters.Regex('^🛒 Корзина$'), cart_command),
+            MessageHandler(filters.Regex('^🛒 (Корзина|Savat)$'), cart_command),
             MessageHandler(
                 filters.Regex('^(💬 Отзывы|ℹ️ О нас|🔥 Акции|⏰ Время работы|🌐 Язык|❓ Помощь|📞 Контакты|📝 Оставить отзыв|🇷🇺 Русский|🇺🇿 O\'zbek|✅ Завершить заказ)$'),
                 block_side_buttons
@@ -1922,7 +2008,7 @@ order_conv_handler = ConversationHandler(
         ],
         PHONE:       [
             MessageHandler(filters.Regex('^❌ Отменить заказ$'), cancel_order),
-            MessageHandler(filters.Regex('^🛒 Корзина$'), cart_command),
+            MessageHandler(filters.Regex('^🛒 (Корзина|Savat)$'), cart_command),
             MessageHandler(
                 filters.Regex('^(💬 Отзывы|ℹ️ О нас|🔥 Акции|⏰ Время работы|🌐 Язык|❓ Помощь|📞 Контакты|📝 Оставить отзыв|🇷🇺 Русский|🇺🇿 O\'zbek|✅ Завершить заказ)$'),
                 block_side_buttons
@@ -1931,7 +2017,7 @@ order_conv_handler = ConversationHandler(
         ],
         ADDRESS:       [
             MessageHandler(filters.Regex('^❌ Отменить заказ$'), cancel_order),
-            MessageHandler(filters.Regex('^🛒 Корзина$'), cart_command),
+            MessageHandler(filters.Regex('^🛒 (Корзина|Savat)$'), cart_command),
             MessageHandler(
                 filters.Regex('^(💬 Отзывы|ℹ️ О нас|🔥 Акции|⏰ Время работы|🌐 Язык|❓ Помощь|📞 Контакты|📝 Оставить отзыв|🇷🇺 Русский|🇺🇿 O\'zbek|✅ Завершить заказ)$'),
                 block_side_buttons
@@ -1940,7 +2026,7 @@ order_conv_handler = ConversationHandler(
         ],
         DELIVERY:      [
             MessageHandler(filters.Regex('^❌ Отменить заказ$'), cancel_order),
-            MessageHandler(filters.Regex('^🛒 Корзина$'), cart_command),
+            MessageHandler(filters.Regex('^🛒 (Корзина|Savat)$'), cart_command),
             MessageHandler(
                 filters.Regex('^(💬 Отзывы|ℹ️ О нас|🔥 Акции|⏰ Время работы|🌐 Язык|❓ Помощь|📞 Контакты|📝 Оставить отзыв|🇷🇺 Русский|🇺🇿 O\'zbek)$'),
                 block_side_buttons
@@ -1949,7 +2035,7 @@ order_conv_handler = ConversationHandler(
         ],
         TIME_CHOICE:   [
             MessageHandler(filters.Regex('^❌ Отменить заказ$'), cancel_order),
-            MessageHandler(filters.Regex('^🛒 Корзина$'), cart_command),
+            MessageHandler(filters.Regex('^🛒 (Корзина|Savat)$'), cart_command),
             MessageHandler(
                 filters.Regex('^(💬 Отзывы|ℹ️ О нас|🔥 Акции|⏰ Время работы|🌐 Язык|❓ Помощь|📞 Контакты|📝 Оставить отзыв|🇷🇺 Русский|🇺🇿 O\'zbek)$'),
                 block_side_buttons
@@ -1958,7 +2044,7 @@ order_conv_handler = ConversationHandler(
         ],
         PAYMENT:       [
             MessageHandler(filters.Regex('^❌ Отменить заказ$'), cancel_order),
-            MessageHandler(filters.Regex('^🛒 Корзина$'), cart_command),
+            MessageHandler(filters.Regex('^🛒 (Корзина|Savat)$'), cart_command),
             MessageHandler(
                 filters.Regex('^(💬 Отзывы|ℹ️ О нас|🔥 Акции|⏰ Время работы|🌐 Язык|❓ Помощь|📞 Контакты|📝 Оставить отзыв|🇷🇺 Русский|🇺🇿 O\'zbek)$'),
                 block_side_buttons
@@ -1967,7 +2053,7 @@ order_conv_handler = ConversationHandler(
         ],
         VERIFY_PAYMENT:[
             MessageHandler(filters.Regex('^❌ Отменить заказ$'), cancel_order),
-            MessageHandler(filters.Regex('^🛒 Корзина$'), cart_command),
+            MessageHandler(filters.Regex('^🛒 (Корзина|Savat)$'), cart_command),
             MessageHandler(
                 filters.Regex('^(💬 Отзывы|ℹ️ О нас|🔥 Акции|⏰ Время работы|🌐 Язык|❓ Помощь|📞 Контакты|📝 Оставить отзыв|🇷🇺 Русский|🇺🇿 O\'zbek)$'),
                 block_side_buttons
@@ -1976,7 +2062,7 @@ order_conv_handler = ConversationHandler(
         ],
         CONFIRM:       [
             MessageHandler(filters.Regex('^❌ Отменить заказ$'), cancel_order),
-            MessageHandler(filters.Regex('^🛒 Корзина$'), cart_command),
+            MessageHandler(filters.Regex('^🛒 (Корзина|Savat)$'), cart_command),
             MessageHandler(
                 filters.Regex('^(💬 Отзывы|ℹ️ О нас|🔥 Акции|⏰ Время работы|🌐 Язык|❓ Помощь|📞 Контакты|📝 Оставить отзыв|🇷🇺 Русский|🇺🇿 O\'zbek)$'),
                 block_side_buttons

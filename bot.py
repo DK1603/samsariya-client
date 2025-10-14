@@ -25,6 +25,7 @@ from handlers.order import (
     remind_unfinished,
     order_start,
     cart_command,
+    cart_from_main_menu,
 )
 from handlers.feedback import (
     review_conv_handler,
@@ -238,7 +239,6 @@ def main():
             commands = [
                 BotCommand("start", "🏠 Главное меню"),
                 BotCommand("order", "🛒 Сделать заказ"),
-                BotCommand("cart", "🛒 Посмотреть корзину"),
             ]
             await application.bot.set_my_commands(commands)
             print("✅ Bot commands set successfully")
@@ -334,14 +334,12 @@ def main():
         filters.Regex('^📞 Контакты$'),
         contact_handler
     ), group=1)
-    app.add_handler(MessageHandler(
-        filters.Regex('^🛒 Корзина$'),
-        cart_command
-    ), group=1)
 
     # Keep old slash commands if you like
     app.add_handler(CommandHandler('start', start), group=1)
     app.add_handler(CommandHandler('cart', cart_command), group=1)
+    
+    # Removed fallback callback handler as it was interfering with conversation handler
 
     # Feedback conversation
     # app.add_handler(feedback_handler, group=1) # This line is removed as per the edit hint.
