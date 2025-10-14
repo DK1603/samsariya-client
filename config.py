@@ -10,7 +10,14 @@ else:
 
 # Telegram
 BOT_TOKEN = os.getenv('BOT_TOKEN')
-ADMIN_ID = int(os.getenv('ADMIN_ID'))
+# Handle multiple admin IDs
+admin_ids_str = os.getenv('ADMIN_ID', '')
+if admin_ids_str:
+    ADMIN_IDS = [int(id.strip()) for id in admin_ids_str.split(',')]
+    ADMIN_ID = ADMIN_IDS[0]  # Keep first one for backward compatibility
+else:
+    ADMIN_IDS = []
+    ADMIN_ID = None
 
 # Payme
 PAYME_MERCHANT_ID = os.getenv('PAYME_MERCHANT_ID')
