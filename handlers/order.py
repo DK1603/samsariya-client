@@ -3,6 +3,7 @@
 import logging
 import json
 import os
+import re
 from datetime import datetime, timezone
 from telegram import (
     ReplyKeyboardMarkup,
@@ -21,7 +22,14 @@ from config import (
     WORK_START_HOUR,
     WORK_END_HOUR
 )
-from handlers.common import main_menu, TEXTS, get_text, get_display_name, get_short_name
+from handlers.common import (
+    main_menu,
+    TEXTS,
+    get_text,
+    get_display_name,
+    get_short_name,
+    get_lang_text,
+)
 from .catalog import PRICES, DISPLAY_NAMES, SHORT_NAMES, SAMSA_KEYS, PACKAGING_KEYS
 from .mongo import get_orders_collection, get_temp_carts_collection
 
@@ -31,6 +39,92 @@ ITEM_SELECT, ITEM_EDIT, PACKAGING_SELECT, NAME, PHONE, ADDRESS, DELIVERY, TIME_C
 # prices/names imported from catalog
 
 # Orders are stored in MongoDB now
+
+
+def format_quantity(context, qty: int) -> str:
+    """Format quantity with localized suffix."""
+    return f"{qty} {get_text(context, 'pieces_suffix')}"
+
+
+def get_blocked_keywords(context):
+    """Return set of button texts that should be ignored as manual input."""
+    texts = context.bot_data.get('texts', TEXTS['ru'])
+    blocked = {
+        f"✅ {get_text(context, 'finish_order')}",
+        f"🛒 {get_text(context, 'cart_button')}",
+        f"❌ {get_text(context, 'cancel_order_button')}",
+    }
+
+    menu_keys = [
+        'btn_reviews',
+        'btn_about',
+        'btn_promo',
+        'btn_hours',
+        'btn_language',
+        'btn_help',
+        'btn_contacts',
+        'btn_leave_review',
+    ]
+
+    for key in menu_keys:
+        value = texts.get(key)
+        if value:
+            blocked.add(value)
+
+    # Add language choices if present
+    for lang_key in ('lang_choice_ru', 'lang_choice_uz'):
+        value = texts.get(lang_key)
+        if value:
+            blocked.add(value)
+
+    return blocked
+
+
+def _pattern_from_values(*values):
+    escaped = [re.escape(v) for v in values]
+    return f"^({'|'.join(escaped)})$"
+
+
+CANCEL_BUTTON_PATTERN = _pattern_from_values(
+    f"❌ {TEXTS['ru']['cancel_order_button']}",
+    f"❌ {TEXTS['uz']['cancel_order_button']}"
+)
+FINISH_BUTTON_PATTERN = _pattern_from_values(
+    f"✅ {TEXTS['ru']['finish_order']}",
+    f"✅ {TEXTS['uz']['finish_order']}"
+)
+CART_BUTTON_PATTERN = _pattern_from_values(
+    f"🛒 {TEXTS['ru']['cart_button']}",
+    f"🛒 {TEXTS['uz']['cart_button']}"
+)
+PAYMENT_BUTTON_PATTERN = _pattern_from_values(
+    f"💵 {TEXTS['ru']['cash_payment']}",
+    f"💵 {TEXTS['uz']['cash_payment']}",
+    f"💳 {TEXTS['ru']['card_payment']}",
+    f"💳 {TEXTS['uz']['card_payment']}"
+)
+
+SIDE_BUTTON_VALUES = [
+    TEXTS['ru']['btn_reviews'], TEXTS['uz']['btn_reviews'],
+    TEXTS['ru']['btn_about'], TEXTS['uz']['btn_about'],
+    TEXTS['ru']['btn_promo'], TEXTS['uz']['btn_promo'],
+    TEXTS['ru']['btn_hours'], TEXTS['uz']['btn_hours'],
+    TEXTS['ru']['btn_language'], TEXTS['uz']['btn_language'],
+    TEXTS['ru']['btn_help'], TEXTS['uz']['btn_help'],
+    TEXTS['ru']['btn_contacts'], TEXTS['uz']['btn_contacts'],
+    TEXTS['ru']['btn_leave_review'], TEXTS['uz']['btn_leave_review'],
+    TEXTS['ru']['lang_choice_ru'], TEXTS['uz']['lang_choice_ru'],
+    TEXTS['ru']['lang_choice_uz'], TEXTS['uz']['lang_choice_uz'],
+]
+
+SIDE_BUTTON_PATTERN = _pattern_from_values(*SIDE_BUTTON_VALUES)
+SIDE_OR_FINISH_PATTERN = _pattern_from_values(
+    *SIDE_BUTTON_VALUES,
+    TEXTS['ru']['finish_order'],
+    TEXTS['uz']['finish_order'],
+    f"✅ {TEXTS['ru']['finish_order']}",
+    f"✅ {TEXTS['uz']['finish_order']}"
+)
 
 
 async def remind_unfinished(context):
@@ -72,12 +166,12 @@ async def order_start(update, context):
                 summary = f"🛒 <b>{get_text(context, 'cart_saved')}</b>\n\n"
                 summary += f"<b>🥟 {get_text(context, 'samsa_section')}</b>\n"
                 for key, qty in samsa_items.items():
-                    summary += f"• {get_short_name(context, key)} — {qty} шт\n"
+                    summary += f"• {get_short_name(context, key)} — {format_quantity(context, qty)}\n"
                 
                 if packaging_items:
                     summary += f"\n<b>📦 {get_text(context, 'packaging_section')}</b>\n"
                     for key, qty in packaging_items.items():
-                        summary += f"• {get_short_name(context, key)} — {qty} шт\n"
+                        summary += f"• {get_short_name(context, key)} — {format_quantity(context, qty)}\n"
                 
                 total = temp_cart.get('total', 0)
                 summary += f"\n💰 <b>{get_text(context, 'total_section')}</b> {total:,} сум\n\n"
@@ -91,19 +185,27 @@ async def order_start(update, context):
             except Exception as text_error:
                 logging.error(f"Error building cart summary: {text_error}")
                 # Fallback to simple text
-                summary = "🛒 <b>Сохраненная корзина</b>\n\n"
+                summary = get_lang_text(
+                    context,
+                    "🛒 <b>Сохраненная корзина</b>\n\n",
+                    "🛒 <b>Saqlangan savat</b>\n\n"
+                )
                 for key, qty in samsa_items.items():
-                    summary += f"• {key} — {qty} шт\n"
+                    summary += f"• {get_short_name(context, key)} — {format_quantity(context, qty)}\n"
                 if packaging_items:
-                    summary += "\n📦 Упаковка:\n"
+                    summary += get_lang_text(context, "\n📦 Упаковка:\n", "\n📦 Qadoqlash:\n")
                     for key, qty in packaging_items.items():
-                        summary += f"• {key} — {qty} шт\n"
+                        summary += f"• {get_short_name(context, key)} — {format_quantity(context, qty)}\n"
                 total = temp_cart.get('total', 0)
-                summary += f"\n💰 Итого: {total:,} сум\n\nЧто хотите сделать?"
-                
+                summary += get_lang_text(
+                    context,
+                    f"\n💰 Итого: {total:,} сум\n\nЧто хотите сделать?",
+                    f"\n💰 Jami: {total:,} so'm\n\nNima qilmoqchisiz?"
+                )
+
                 choice_kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton('✅ Продолжить заказ', callback_data='continue_cart')],
-                    [InlineKeyboardButton('🆕 Новый заказ', callback_data='new_cart')]
+                    [InlineKeyboardButton(get_lang_text(context, '✅ Продолжить заказ', '✅ Davom ettirish'), callback_data='continue_cart')],
+                    [InlineKeyboardButton(get_lang_text(context, '🆕 Новый заказ', '🆕 Yangi buyurtma'), callback_data='new_cart')]
                 ])
             
             await target.reply_text(summary, reply_markup=choice_kb, parse_mode='HTML')
@@ -123,7 +225,11 @@ async def order_start(update, context):
         # Check if availability data is loaded
         if 'avail' not in context.bot_data:
             await target.reply_text(
-                "❌ Меню временно недоступно. Попробуйте позже.",
+                get_lang_text(
+                    context,
+                    "❌ Меню временно недоступно. Попробуйте позже.",
+                    "❌ Menyu vaqtincha mavjud emas. Keyinroq urinib koʻring."
+                ),
                 reply_markup=context.bot_data.get('keyb', {}).get('main')
             )
             return ConversationHandler.END
@@ -145,7 +251,12 @@ async def order_start(update, context):
         items = context.user_data.get('items', {})
         samsa_items = {k: v for k, v in items.items() if k in SAMSA_KEYS and v > 0}
         if samsa_items:
-            available_items.append([InlineKeyboardButton('✅ Готово', callback_data='done_menu')])
+            available_items.append([
+                InlineKeyboardButton(
+                    get_lang_text(context, '✅ Готово', '✅ Tayyor'),
+                    callback_data='done_menu'
+                )
+            ])
         
         menu_kb = InlineKeyboardMarkup(available_items)
         
@@ -179,7 +290,11 @@ async def order_start(update, context):
         target = update.message or (update.callback_query.message if update.callback_query else None)
         if target:
             await target.reply_text(
-                "❌ Произошла ошибка при запуске заказа. Попробуйте позже.",
+                get_lang_text(
+                    context,
+                    "❌ Произошла ошибка при запуске заказа. Попробуйте позже.",
+                    "❌ Buyurtmani boshlashda xatolik yuz berdi. Keyinroq urinib koʻring."
+                ),
                 reply_markup=context.bot_data.get('keyb', {}).get('main')
             )
         return ConversationHandler.END
@@ -209,9 +324,9 @@ async def select_samsa(update, context):
         caption = (
             f"🥟 <b>{get_display_name(context, key)}</b>\n\n"
             f"💰 {get_text(context, 'price_label')} {PRICES[key]:,} сум\n"
-            f"📦 {get_text(context, 'in_cart')} {qty} шт\n"
+            f"📦 {get_text(context, 'in_cart')} {format_quantity(context, qty)}\n"
             f"💵 <b>{get_text(context, 'total_cost')} {cart_total:,} сум</b>\n\n"
-            f"💡 <i>Введите количество или прибавляйте кнопками</i>"
+            f"{get_lang_text(context, '💡 <i>Введите количество или прибавляйте кнопками</i>', '💡 <i>Soni kiriting yoki tugmalar bilan o\'zgartiring</i>')}"
         )
     except Exception as e:
         logging.error(f"Error in select_samsa: {e}")
@@ -301,7 +416,11 @@ async def continue_with_cart(update, context):
         return PACKAGING_SELECT
     else:
         await q.edit_message_text(
-            "❌ Корзина не найдена. Начните новый заказ.",
+            get_lang_text(
+                context,
+                "❌ Корзина не найдена. Начните новый заказ.",
+                "❌ Savat topilmadi. Yangi buyurtma boshlang."
+            ),
             parse_mode='HTML'
         )
         return ConversationHandler.END
@@ -324,20 +443,28 @@ async def start_new_cart(update, context):
         # Check if availability data is loaded
         if 'avail' not in context.bot_data:
             await q.edit_message_text(
-                "❌ Меню временно недоступно. Попробуйте позже.",
+                get_lang_text(
+                    context,
+                    "❌ Меню временно недоступно. Попробуйте позже.",
+                    "❌ Menyu vaqtincha mavjud emas. Keyinroq urinib koʻring."
+                ),
                 parse_mode='HTML'
             )
             return ConversationHandler.END
         
         # Create menu buttons
         available_items = [
-            [InlineKeyboardButton(f"{SHORT_NAMES.get(k, k)} - {PRICES[k]:,} сум", callback_data=f'samsa:{k}')]
+            [InlineKeyboardButton(f"{get_short_name(context, k)} - {PRICES[k]:,} сум", callback_data=f'samsa:{k}')]
             for k in SAMSA_KEYS if context.bot_data['avail'].get(k, False)
         ]
         
         if not available_items:
             await q.edit_message_text(
-                "❌ В данный момент самса недоступна. Попробуйте позже.",
+                get_lang_text(
+                    context,
+                    "❌ В данный момент самса недоступна. Попробуйте позже.",
+                    "❌ Hozircha somsa mavjud emas. Keyinroq urinib koʻring."
+                ),
                 parse_mode='HTML'
             )
             return ConversationHandler.END
@@ -347,15 +474,26 @@ async def start_new_cart(update, context):
         # Create ordering keyboard
         from telegram import ReplyKeyboardMarkup, KeyboardButton
         ordering_keyboard = ReplyKeyboardMarkup(
-            [[KeyboardButton('✅ Завершить заказ'), KeyboardButton('🛒 Корзина'), KeyboardButton('❌ Отменить заказ')]],
+            [[
+                KeyboardButton(f"✅ {get_text(context, 'finish_order')}") ,
+                KeyboardButton(f"🛒 {get_text(context, 'cart_button')}") ,
+                KeyboardButton(f"❌ {get_text(context, 'cancel_order_button')}")
+            ]],
             resize_keyboard=True
         )
         
-        await q.edit_message_text('🥟 Выберите самсу:', reply_markup=menu_kb)
+        await q.edit_message_text(
+            get_lang_text(context, '🥟 Выберите самсу:', '🥟 Somsa tanlang:'),
+            reply_markup=menu_kb
+        )
         
         # Send keyboard hint
         await update.effective_chat.send_message(
-            '💡 <b>Подсказка:</b> После выбора самсы нажмите "✅ Завершить заказ"',
+            get_lang_text(
+                context,
+                '💡 <b>Подсказка:</b> После выбора самсы нажмите "✅ Завершить заказ"',
+                '💡 <b>Maslahat:</b> Somsa tanlagandan keyin "✅ Buyurtmani yakunlash" tugmasini bosing'
+            ),
             reply_markup=ordering_keyboard,
             parse_mode='HTML'
         )
@@ -365,7 +503,11 @@ async def start_new_cart(update, context):
     except Exception as e:
         logging.error(f"Error in start_new_cart: {e}")
         await q.message.reply_text(
-            "❌ Произошла ошибка. Попробуйте позже.",
+            get_lang_text(
+                context,
+                "❌ Произошла ошибка. Попробуйте позже.",
+                "❌ Xatolik yuz berdi. Keyinroq urinib koʻring."
+            ),
             parse_mode='HTML'
         )
         return ConversationHandler.END
@@ -386,9 +528,9 @@ async def inc_item(update, context):
     caption = (
         f"🥟 <b>{get_display_name(context, key)}</b>\n\n"
         f"💰 {get_text(context, 'price_label')} {PRICES[key]:,} сум\n"
-        f"📦 {get_text(context, 'in_cart')} {qty} шт\n"
+        f"📦 {get_text(context, 'in_cart')} {format_quantity(context, qty)}\n"
         f"💵 <b>{get_text(context, 'total_cost')} {cart_total:,} сум</b>\n\n"
-        f"💡 <i>Введите количество или прибавляйте кнопками</i>"
+        f"{get_lang_text(context, '💡 <i>Введите количество или прибавляйте кнопками</i>', '💡 <i>Soni kiriting yoki tugmalar bilan o\'zgartiring</i>')}"
     )
     
     keyboard = InlineKeyboardMarkup([
@@ -425,9 +567,9 @@ async def dec_item(update, context):
     caption = (
         f"🥟 <b>{get_display_name(context, key)}</b>\n\n"
         f"💰 {get_text(context, 'price_label')} {PRICES[key]:,} сум\n"
-        f"📦 {get_text(context, 'in_cart')} {qty} шт\n"
+        f"📦 {get_text(context, 'in_cart')} {format_quantity(context, qty)}\n"
         f"💵 <b>{get_text(context, 'total_cost')} {cart_total:,} сум</b>\n\n"
-        f"💡 <i>Введите количество или прибавляйте кнопками</i>"
+        f"{get_lang_text(context, '💡 <i>Введите количество или прибавляйте кнопками</i>', '💡 <i>Soni kiriting yoki tugmalar bilan o\'zgartiring</i>')}"
     )
     
     keyboard = InlineKeyboardMarkup([
@@ -484,7 +626,7 @@ async def finish_item(update, context):
         # Show a simple confirmation message (no buttons needed)
         if qty > 0:
             await update.effective_chat.send_message(
-                f"✅ <b>{get_short_name(context, key)}</b> {get_text(context, 'add_to_cart')} ({qty} шт)",
+                f"✅ <b>{get_short_name(context, key)}</b> {get_text(context, 'add_to_cart')} ({format_quantity(context, qty)})",
                 parse_mode='HTML'
             )
         
@@ -492,7 +634,13 @@ async def finish_item(update, context):
         
     except Exception as e:
         logging.error(f"Error in finish_item: {e}")
-        await q.message.reply_text("❌ Произошла ошибка при завершении выбора.")
+        await q.message.reply_text(
+            get_lang_text(
+                context,
+                "❌ Произошла ошибка при завершении выбора.",
+                "❌ Tanlovni yakunlashda xatolik yuz berdi."
+            )
+        )
         return ITEM_SELECT
 
 
@@ -503,7 +651,7 @@ async def back_to_menu(update, context):
     
     # Show menu of samsa types as inline buttons - one per row for easy clicking
     available_items = [
-        [InlineKeyboardButton(f"{SHORT_NAMES.get(k, k)} — {PRICES[k]:,} сум", callback_data=f'samsa:{k}')]
+        [InlineKeyboardButton(f"{get_short_name(context, k)} — {PRICES[k]:,} сум", callback_data=f'samsa:{k}')]
         for k in SAMSA_KEYS if context.bot_data['avail'].get(k, False)
     ]
     
@@ -511,7 +659,12 @@ async def back_to_menu(update, context):
     items = context.user_data.get('items', {})
     samsa_items = {k: v for k, v in items.items() if k in SAMSA_KEYS and v > 0}
     if samsa_items:
-        available_items.append([InlineKeyboardButton('✅ Готово', callback_data='done_menu')])
+        available_items.append([
+            InlineKeyboardButton(
+                get_lang_text(context, '✅ Готово', '✅ Tayyor'),
+                callback_data='done_menu'
+            )
+        ])
     
     menu_kb = InlineKeyboardMarkup(available_items)
     
@@ -519,7 +672,10 @@ async def back_to_menu(update, context):
         # Check if the message has text (not a photo message)
         if q.message.text:
             # Edit existing text message
-            await q.edit_message_text('🥟 Выберите самсу:', reply_markup=menu_kb)
+            await q.edit_message_text(
+                get_lang_text(context, '🥟 Выберите самсу:', '🥟 Somsa tanlang:'),
+                reply_markup=menu_kb
+            )
         else:
             # If it's a photo message, delete it and send new text message
             try:
@@ -527,12 +683,19 @@ async def back_to_menu(update, context):
             except:
                 pass
             # Send new menu message
-            await update.effective_chat.send_message('🥟 Выберите самсу:', reply_markup=menu_kb)
+            await update.effective_chat.send_message(
+                get_lang_text(context, '🥟 Выберите самсу:', '🥟 Somsa tanlang:'),
+                reply_markup=menu_kb
+            )
     except Exception as e:
         logging.error(f"Error editing message in back_to_menu: {e}")
         # Always fallback to new message
         try:
-            await update.effective_chat.send_message('🥟 Выберите самсу:', reply_markup=menu_kb)
+            await update.effective_chat.send_message(
+                get_lang_text(context, '🥟 Выберите самсу:', '🥟 Somsa tanlang:'),
+                reply_markup=menu_kb
+            )
+        
         except Exception as e2:
             logging.error(f"Error sending fallback menu: {e2}")
     
@@ -566,7 +729,7 @@ async def finish_menu(update, context):
     context.user_data['total'] = total
     
     # Show cart summary first
-    lines = [f"• {get_display_name(context, k)} — {v} шт" for k, v in samsa_items.items()]
+    lines = [f"• {get_display_name(context, k)} — {format_quantity(context, v)}" for k, v in samsa_items.items()]
     receipt = "\n".join(lines)
     text = (
         f"🛒 <b>{get_text(context, 'cart_section')}</b>\n"
@@ -601,23 +764,26 @@ async def show_packaging_menu(update, context):
             logging.error(f"Error deleting previous message: {e}")
     else:
         target = update.message
-    
+
     # Create packaging menu with all options as inline buttons
     packaging_buttons = []
     for key in PACKAGING_KEYS:
         if context.bot_data['avail'].get(key, False):
-            packaging_buttons.append([InlineKeyboardButton(
-                f"{get_short_name(context, key)} (+{PRICES[key]:,} сум)", 
-                callback_data=f'packaging:{key}'
-            )])
-    
+            packaging_buttons.append([
+                InlineKeyboardButton(
+                    f"{get_short_name(context, key)} (+{PRICES[key]:,} сум)",
+                    callback_data=f'packaging:{key}'
+                )
+            ])
+
     # Add back button
-    packaging_buttons.append([InlineKeyboardButton(f'⬅️ {get_text(context, "back_to_cart")}', callback_data='back_to_cart')])
-    
+    packaging_buttons.append([
+        InlineKeyboardButton(f"⬅️ {get_text(context, 'back_to_cart')}", callback_data='back_to_cart')
+    ])
+
     menu_kb = InlineKeyboardMarkup(packaging_buttons)
     
     text = f"📦 <b>{get_text(context, 'choose_packaging')}</b>\n\n{get_text(context, 'packaging_required')}"
-    
     # Try to send with packaging image
     try:
         # Use cached file_id for the packaging menu image
@@ -771,8 +937,11 @@ async def clear_cart(update, context):
     
     # Send new message with main keyboard
     await update.effective_chat.send_message(
-        "🗑️ <b>Корзина очищена</b>\n\n"
-        "Начните новый заказ, когда будете готовы!",
+        get_lang_text(
+            context,
+            "🗑️ <b>Корзина очищена</b>\n\nНачните новый заказ, когда будете готовы!",
+            "🗑️ <b>Savat tozalandi</b>\n\nTayyor bo'lganda yangi buyurtma boshlang!"
+        ),
         reply_markup=context.bot_data['keyb']['main'],
         parse_mode='HTML'
     )
@@ -785,18 +954,13 @@ async def handle_name_input(update, context):
     text = update.message.text.strip()
     
     # Block keyboard button text
-    blocked_keywords = [
-        '✅ Завершить заказ', '🛒 Корзина', '❌ Отменить заказ',
-        '💬 Отзывы', 'ℹ️ О нас', '🔥 Акции', '⏰ Время работы',
-        '🌐 Язык', '❓ Помощь', '📞 Контакты', '📝 Оставить отзыв',
-        '🇷🇺 Русский', '🇺🇿 O\'zbek'
-    ]
-    
-    if text in blocked_keywords or text.startswith('/'):
+    if text in get_blocked_keywords(context) or text.startswith('/'):
         await update.message.reply_text(
-            f"⚠️ <b>{get_text(context, 'enter_name_manually')}</b>\n\n"
-            f"Не используйте кнопки меню. Просто напишите своё имя.\n\n"
-            f"<i>{get_text(context, 'name_example')}</i>",
+            (
+                f"⚠️ <b>{get_text(context, 'enter_name_manually')}</b>\n\n"
+                f"{get_lang_text(context, 'Не используйте кнопки меню. Просто напишите своё имя.', 'Menyu tugmalaridan foydalanmang. Ismingizni qo\'lda yozing.')}\n\n"
+                f"<i>{get_text(context, 'name_example')}</i>"
+            ),
             parse_mode='HTML',
             reply_markup=ForceReply(selective=True)
         )
@@ -832,18 +996,13 @@ async def handle_phone_input(update, context):
     text = update.message.text.strip()
     
     # Block keyboard button text
-    blocked_keywords = [
-        '✅ Завершить заказ', '🛒 Корзина', '❌ Отменить заказ',
-        '💬 Отзывы', 'ℹ️ О нас', '🔥 Акции', '⏰ Время работы',
-        '🌐 Язык', '❓ Помощь', '📞 Контакты', '📝 Оставить отзыв',
-        '🇷🇺 Русский', '🇺🇿 O\'zbek'
-    ]
-    
-    if text in blocked_keywords or text.startswith('/'):
+    if text in get_blocked_keywords(context) or text.startswith('/'):
         await update.message.reply_text(
-            f"⚠️ <b>{get_text(context, 'enter_phone_manually')}</b>\n\n"
-            f"Не используйте кнопки меню. Просто напишите номер телефона.\n\n"
-            f"<i>{get_text(context, 'phone_example')}</i>",
+            (
+                f"⚠️ <b>{get_text(context, 'enter_phone_manually')}</b>\n\n"
+                f"{get_lang_text(context, 'Не используйте кнопки меню. Просто напишите номер телефона.', 'Menyu tugmalaridan foydalanmang. Telefon raqamini qo\'lda yozing.')}\n\n"
+                f"<i>{get_text(context, 'phone_example')}</i>"
+            ),
             parse_mode='HTML',
             reply_markup=ForceReply(selective=True)
         )
@@ -869,7 +1028,7 @@ async def handle_phone_input(update, context):
         f"📍 <b>{get_text(context, 'enter_address')}</b>\n\n"
         f"⚠️ <i>{get_text(context, 'enter_address_manually')}</i>\n\n"
         f"<i>{get_text(context, 'address_example')}</i>\n"
-        f"или: Чиланзар, 12 квартал, дом 3"
+        f"{get_lang_text(context, 'Или: Чиланзар, 12 квартал, дом 3', 'Yoki: Chilonzor, 12-mavze, 3-uy')}"
     )
     
     await update.message.reply_text(address_prompt, parse_mode='HTML', reply_markup=ForceReply(selective=True))
@@ -881,18 +1040,13 @@ async def handle_address_input(update, context):
     text = update.message.text.strip()
     
     # Block keyboard button text
-    blocked_keywords = [
-        '✅ Завершить заказ', '🛒 Корзина', '❌ Отменить заказ',
-        '💬 Отзывы', 'ℹ️ О нас', '🔥 Акции', '⏰ Время работы',
-        '🌐 Язык', '❓ Помощь', '📞 Контакты', '📝 Оставить отзыв',
-        '🇷🇺 Русский', '🇺🇿 O\'zbek'
-    ]
-    
-    if text in blocked_keywords or text.startswith('/'):
+    if text in get_blocked_keywords(context) or text.startswith('/'):
         await update.message.reply_text(
-            f"⚠️ <b>{get_text(context, 'enter_address_manually')}</b>\n\n"
-            f"Не используйте кнопки меню. Просто напишите адрес.\n\n"
-            f"<i>{get_text(context, 'address_example')}</i>",
+            (
+                f"⚠️ <b>{get_text(context, 'enter_address_manually')}</b>\n\n"
+                f"{get_lang_text(context, 'Не используйте кнопки меню. Просто напишите адрес.', 'Menyu tugmalaridan foydalanmang. Manzilni qo\'lda yozing.')}\n\n"
+                f"<i>{get_text(context, 'address_example')}</i>"
+            ),
             parse_mode='HTML',
             reply_markup=ForceReply(selective=True)
         )
@@ -927,20 +1081,38 @@ async def handle_address_input(update, context):
 async def order_contact(update, context):
     context.user_data['delivery'] = update.message.text
     
+    pickup_text = f"🏃 {get_text(context, 'pickup_option')}"
+    asap_text = f"⏰ {get_text(context, 'asap')}"
+    specific_text = f"🕒 {get_text(context, 'specific_time')}"
+
     # If self-pickup, send address and location first
-    if update.message.text == "🏃 Самовывоз":
+    if update.message.text == pickup_text:
         # Send address information
         from config import BUSINESS_NAME, BUSINESS_ADDRESS, BUSINESS_LANDMARK, BUSINESS_HOURS
-        address_message = (
-            f"📍 <b>Вы можете забрать заказ самостоятельно, мы находимся по адресу:</b>\n\n"
-            f"🏪 <b>{BUSINESS_NAME}</b>\n"
-            f"📍 {BUSINESS_ADDRESS}\n"
-            f"🏟️ {BUSINESS_LANDMARK}\n"
-            f"⏰ Время работы: {BUSINESS_HOURS}\n\n"
-            "💡 <b>Как добраться:</b>\n"
-            "• Нажмите на локацию ниже для навигации\n"
-            "• Или скопируйте адрес в навигатор\n"
-            "• Чтобы было удобнее - вот наша локация на карте:"
+        address_message = get_lang_text(
+            context,
+            (
+                "📍 <b>Вы можете забрать заказ самостоятельно, мы находимся по адресу:</b>\n\n"
+                f"🏪 <b>{BUSINESS_NAME}</b>\n"
+                f"📍 {BUSINESS_ADDRESS}\n"
+                f"🏟️ {BUSINESS_LANDMARK}\n"
+                f"⏰ Время работы: {BUSINESS_HOURS}\n\n"
+                "💡 <b>Как добраться:</b>\n"
+                "• Нажмите на локацию ниже для навигации\n"
+                "• Или скопируйте адрес в навигатор\n"
+                "• Чтобы было удобнее — вот наша локация на карте:"
+            ),
+            (
+                "📍 <b>Buyurtmani o'zingiz olib ketishingiz mumkin. Manzilimiz:</b>\n\n"
+                f"🏪 <b>{BUSINESS_NAME}</b>\n"
+                f"📍 {BUSINESS_ADDRESS}\n"
+                f"🏟️ {BUSINESS_LANDMARK}\n"
+                f"⏰ Ish vaqti: {BUSINESS_HOURS}\n\n"
+                "💡 <b>Qanday yetib kelish:</b>\n"
+                "• Navigatsiya uchun pastdagi lokatsiyani bosing\n"
+                "• Yoki manzilni navigatorga nusxa ko'chiring\n"
+                "• Qulay bo'lishi uchun — xaritadagi manzilimiz shu:"
+            )
         )
         
         await update.message.reply_text(address_message, parse_mode='HTML')
@@ -957,25 +1129,32 @@ async def order_contact(update, context):
         
         # Then ask for time
         await update.message.reply_text(
-            "⏰ Для самовывоза необходимо указать время получения.\n\nВведите время (например, 14:30):",
+            get_lang_text(
+                context,
+                "⏰ Для самовывоза необходимо указать время получения.\n\nВведите время (например, 14:30):",
+                "⏰ O'zingiz olib ketish uchun olish vaqtini ko'rsating.\n\nVaqtni kiriting (masalan, 14:30):"
+            ),
             reply_markup=ForceReply()
         )
         return TIME_CHOICE
     
     # For delivery, show time options
-    kb = ReplyKeyboardMarkup([["⏰ Как можно скорее", "🕒 К конкретному времени"]], one_time_keyboard=True, resize_keyboard=True)
-    await update.message.reply_text('Когда доставить?', reply_markup=kb)
+    kb = ReplyKeyboardMarkup([[asap_text, specific_text]], one_time_keyboard=True, resize_keyboard=True)
+    await update.message.reply_text(get_text(context, 'when_deliver'), reply_markup=kb)
     return TIME_CHOICE
 
 
 async def order_time(update, context):
     choice = update.message.text
-    if choice == '🕒 К конкретному времени':
-        await update.message.reply_text('Введите время (например, 14:30):', reply_markup=ForceReply())
+    specific_text = f"🕒 {get_text(context, 'specific_time')}"
+    if choice == specific_text:
+        await update.message.reply_text(get_text(context, 'enter_time'), reply_markup=ForceReply())
         return TIME_CHOICE
     context.user_data['time'] = choice
-    kb = ReplyKeyboardMarkup([["💵 Наличные", "💳 Оплатить по карте"]], one_time_keyboard=True, resize_keyboard=True)
-    await update.message.reply_text('Выберите способ оплаты:', reply_markup=kb)
+    cash_text = f"💵 {get_text(context, 'cash_payment')}"
+    card_text = f"💳 {get_text(context, 'card_payment')}"
+    kb = ReplyKeyboardMarkup([[cash_text, card_text]], one_time_keyboard=True, resize_keyboard=True)
+    await update.message.reply_text(get_text(context, 'choose_payment'), reply_markup=kb)
     return PAYMENT
 
 
@@ -984,18 +1163,21 @@ async def order_payment(update, context):
     context.user_data['method'] = method
     total = context.user_data.get('total', 0)
 
-    if method == '💳 Оплатить по карте':
+    card_text = f"💳 {get_text(context, 'card_payment')}"
+    if method == card_text:
         # Store payment start time for 10-minute timer
         context.user_data['payment_start_time'] = datetime.now()
         
         await update.message.reply_text(
-            f"💳 <b>Оплата картой</b>\n\n"
-            f"💰 Сумма к оплате: <b>{total:,} сум</b>\n"
-            f"🏦 Номер карты: <b>5614 6829 1638 2346</b>\n"
-            f"🏛️ Банк: UzCard, OFB\n\n"
-            f"⏰ <b>У вас есть 10 минут на оплату!</b>\n\n"
-            f"После перевода отправьте в этот чат сумму цифрами.\n"
-            f"Заказ будет подтвержден администратором после проверки оплаты.",
+            (
+                f"💳 <b>{get_text(context, 'card_payment_details')}</b>\n\n"
+                f"💰 {get_text(context, 'amount_to_pay')} <b>{total:,} сум</b>\n"
+                f"🏦 {get_text(context, 'card_number')} <b>5614 6829 1638 2346</b>\n"
+                f"🏛️ {get_text(context, 'bank_info')}\n\n"
+                f"⏰ <b>{get_text(context, 'payment_time_limit')}</b>\n\n"
+                f"{get_text(context, 'payment_instructions')}\n"
+                f"{get_lang_text(context, 'Заказ будет подтвержден администратором после проверки оплаты.', 'To\'lov tekshirilgach, administrator buyurtmani tasdiqlaydi.')}"
+            ),
             parse_mode='HTML'
         )
         return VERIFY_PAYMENT
@@ -1010,12 +1192,24 @@ async def verify_payment(update, context):
     try:
         paid = int(text)
     except ValueError:
-        await update.message.reply_text("Введите сумму цифрами (например, 10000).")
+        await update.message.reply_text(
+            get_lang_text(
+                context,
+                "Введите сумму цифрами (например, 10000).",
+                "Summani raqamlarda kiriting (masalan, 10000)."
+            )
+        )
         return VERIFY_PAYMENT
 
     total = context.user_data.get('total', 0)
     if paid != total:
-        await update.message.reply_text(f"Сумма не совпадает ({paid} ≠ {total}). Попробуйте ещё раз.")
+        await update.message.reply_text(
+            get_lang_text(
+                context,
+                f"Сумма не совпадает ({paid} ≠ {total}). Попробуйте ещё раз.",
+                f"Summalar mos kelmadi ({paid} ≠ {total}). Yana urinib ko'ring."
+            )
+        )
         return VERIFY_PAYMENT
 
     # Check if 10 minutes have passed
@@ -1024,17 +1218,26 @@ async def verify_payment(update, context):
         time_diff = datetime.now() - payment_start_time
         if time_diff.total_seconds() > 600:  # 10 minutes = 600 seconds
             await update.message.reply_text(
-                "⏰ Время оплаты истекло (10 минут).\n\n"
-                "Пожалуйста, начните заказ заново или выберите оплату наличными.",
-                reply_markup=ReplyKeyboardMarkup([["💵 Наличные"]], one_time_keyboard=True, resize_keyboard=True)
+                get_lang_text(
+                    context,
+                    "⏰ Время оплаты истекло (10 минут).\n\nПожалуйста, начните заказ заново или выберите оплату наличными.",
+                    "⏰ To'lov uchun ajratilgan vaqt tugadi (10 daqiqa).\n\nIltimos, buyurtmani qaytadan boshlang yoki naqd to'lovni tanlang."
+                ),
+                reply_markup=ReplyKeyboardMarkup(
+                    [[f"💵 {get_text(context, 'cash_payment')}"]],
+                    one_time_keyboard=True,
+                    resize_keyboard=True
+                )
             )
             return PAYMENT
 
     # Payment amount is correct and within time limit
     await update.message.reply_text(
-        "✅ <b>Сумма оплаты подтверждена!</b>\n\n"
-        "⏳ Ожидайте подтверждения от администратора.\n"
-        "После проверки оплаты ваш заказ будет принят в обработку.",
+        (
+            f"✅ <b>{get_text(context, 'payment_confirmation')}</b>\n\n"
+            f"⏳ {get_text(context, 'waiting_admin_confirmation')}\n"
+            f"{get_lang_text(context, 'После проверки оплаты ваш заказ будет принят в обработку.', 'To\'lov tekshirilgach, buyurtmangiz ko\'rib chiqiladi.')}"
+        ),
         parse_mode='HTML'
     )
     
@@ -1058,17 +1261,17 @@ async def show_summary_and_confirm(update, context):
     for key, qty in items.items():
         if qty > 0:
             if key in SAMSA_KEYS:
-                samsa_items.append(f"• {get_display_name(context, key)} — {qty} шт")
+                samsa_items.append(f"• {get_display_name(context, key)} — {format_quantity(context, qty)}")
             elif key in PACKAGING_KEYS:
-                packaging_items.append(f"• {get_display_name(context, key)} — {qty} шт")
+                packaging_items.append(f"• {get_display_name(context, key)} — {format_quantity(context, qty)}")
     
-    summary = "🧾 <b>Ваш заказ:</b>\n\n"
+    summary = get_lang_text(context, "🧾 <b>Ваш заказ:</b>\n\n", "🧾 <b>Buyurtmangiz:</b>\n\n")
     
     if samsa_items:
-        summary += "<b>🥟 Самса:</b>\n" + "\n".join(samsa_items) + "\n\n"
+        summary += get_lang_text(context, "<b>🥟 Самса:</b>\n", "<b>🥟 Somsa:</b>\n") + "\n".join(samsa_items) + "\n\n"
     
     if packaging_items:
-        summary += "<b>📦 Упаковка:</b>\n" + "\n".join(packaging_items) + "\n\n"
+        summary += get_lang_text(context, "<b>📦 Упаковка:</b>\n", "<b>📦 Qadoqlash:</b>\n") + "\n".join(packaging_items) + "\n\n"
     
     # Get customer details
     customer_name = context.user_data.get('customer_name', '—')
@@ -1076,55 +1279,86 @@ async def show_summary_and_confirm(update, context):
     customer_address = context.user_data.get('customer_address', '—')
     
     summary += (
-        f"💰 <b>Сумма:</b> {total:,} сум\n\n"
-        f"👤 <b>Имя:</b> {customer_name}\n"
-        f"📱 <b>Телефон:</b> {customer_phone}\n"
-        f"📍 <b>Адрес:</b> {customer_address}\n\n"
+        f"💰 <b>{get_text(context, 'sum_total')}</b> {total:,} сум\n\n"
+        f"👤 <b>{get_text(context, 'name_field')}</b> {customer_name}\n"
+        f"📱 <b>{get_text(context, 'phone_field')}</b> {customer_phone}\n"
+        f"📍 <b>{get_text(context, 'address_field')}</b> {customer_address}\n\n"
         f"🚚 <b>{context.user_data.get('delivery', '—')}</b>\n"
         f"⏰ <b>{context.user_data.get('time', '—')}</b>"
     )
     context.user_data['summary'] = summary
-    kb = ReplyKeyboardMarkup([["Подтвердить", "Отменить"]], one_time_keyboard=True, resize_keyboard=True)
+    confirm_text = get_lang_text(context, "Подтвердить", "Tasdiqlash")
+    cancel_text = get_lang_text(context, "Отменить", "Bekor qilish")
+    kb = ReplyKeyboardMarkup([[confirm_text, cancel_text]], one_time_keyboard=True, resize_keyboard=True)
     await update.message.reply_text(summary, reply_markup=kb, parse_mode='HTML')
 
 
 async def order_confirm(update, context):
-    text = (update.message.text or "").strip().lower()
-    if text in ['подтвердить', '✅ подтвердить']:
+    confirm_text = get_lang_text(context, "Подтвердить", "Tasdiqlash")
+    cancel_text = get_lang_text(context, "Отменить", "Bekor qilish")
+    text_raw = (update.message.text or "").strip()
+    text_lower = text_raw.lower()
+
+    confirm_variants = {
+        TEXTS['ru']['confirm_order'].lower(),
+        TEXTS['uz']['confirm_order'].lower(),
+        f"✅ {TEXTS['ru']['confirm_order']}".lower(),
+        f"✅ {TEXTS['uz']['confirm_order']}".lower(),
+        confirm_text.lower(),
+        f"✅ {confirm_text}".lower(),
+    }
+    cancel_variants = {
+        TEXTS['ru']['cancel_order'].lower(),
+        TEXTS['uz']['cancel_order'].lower(),
+        f"❌ {TEXTS['ru']['cancel_order']}".lower(),
+        f"❌ {TEXTS['uz']['cancel_order']}".lower(),
+        cancel_text.lower(),
+        f"❌ {cancel_text}".lower(),
+    }
+
+    if text_lower in confirm_variants:
         try:
             uid = str(update.effective_user.id)
-            
-            # Determine order status based on payment method
-            payment_method = context.user_data.get('method')
-            if payment_method == '💳 Оплатить по карте':
+
+            payment_method = context.user_data.get('method', '')
+            is_card_payment = payment_method.startswith('💳')
+
+            if is_card_payment:
                 if context.user_data.get('payment_verified'):
                     order_status = 'pending_admin_confirmation'
-                    status_message = '⏳ Заказ отправлен на подтверждение администратором. Ожидайте проверки оплаты.'
+                    status_message = get_lang_text(
+                        context,
+                        '⏳ Заказ отправлен на подтверждение администратором. Ожидайте проверки оплаты.',
+                        '⏳ Buyurtma administrator tasdigʻiga yuborildi. Toʻlov tekshirilishini kuting.'
+                    )
                 else:
                     order_status = 'payment_failed'
-                    status_message = '❌ Ошибка оплаты. Пожалуйста, попробуйте еще раз.'
+                    status_message = get_lang_text(
+                        context,
+                        '❌ Ошибка оплаты. Пожалуйста, попробуйте еще раз.',
+                        '❌ Toʻlovda xatolik. Iltimos, yana urinib koʻring.'
+                    )
             else:
                 order_status = 'new'
-                status_message = '🎉 Ваш заказ принят! С вами скоро свяжутся.'
-            
-            # Check if MongoDB is available
+                status_message = get_lang_text(
+                    context,
+                    '🎉 Ваш заказ принят! С вами скоро свяжутся.',
+                    '🎉 Buyurtmangiz qabul qilindi! Tez orada siz bilan bogʻlanamiz.'
+                )
+
             if context.bot_data.get('mongodb_available', True):
-                # Persist to MongoDB
                 from datetime import datetime, timezone
-                
-                # Check if this is a preorder (night time order)
+
                 current_hour = datetime.now().hour
-                is_preorder = current_hour >= 22 or current_hour <= 6  # Night time: 10 PM to 6 AM
-                
+                is_preorder = current_hour >= 22 or current_hour <= 6
+
                 order_doc = {
                     'user_id': int(uid) if uid.isdigit() else uid,
                     'items': context.user_data.get('items', {}),
                     'total': context.user_data.get('total', 0),
-                    # New separate customer details fields
                     'customer_name': context.user_data.get('customer_name'),
                     'customer_phone': context.user_data.get('customer_phone'),
                     'customer_address': context.user_data.get('customer_address'),
-                    # Keep old contact field for backward compatibility (deprecated)
                     'contact': context.user_data.get('contact'),
                     'delivery': context.user_data.get('delivery'),
                     'time': context.user_data.get('time'),
@@ -1138,11 +1372,7 @@ async def order_confirm(update, context):
                 }
                 col = get_orders_collection()
                 await col.insert_one(order_doc)
-                
-                # Admin notifications are handled by admin bot
-                # Client bot only saves orders to MongoDB
             else:
-                # Fallback to local storage
                 import json
                 from datetime import datetime
                 order_data = {
@@ -1159,28 +1389,56 @@ async def order_confirm(update, context):
                     'payment_amount': context.user_data.get('payment_amount', 0),
                     'created_at': datetime.now().isoformat(),
                 }
-                
-                # Load existing orders
+
                 orders_file = 'data/orders.json'
                 try:
                     with open(orders_file, 'r', encoding='utf-8') as f:
                         orders = json.load(f)
                 except (FileNotFoundError, json.JSONDecodeError):
                     orders = []
-                
+
                 orders.append(order_data)
-                
-                # Save back to file
+
                 with open(orders_file, 'w', encoding='utf-8') as f:
                     json.dump(orders, f, ensure_ascii=False, indent=2)
 
-            await update.message.reply_text(status_message)
+            await update.message.reply_text(status_message, reply_markup=context.bot_data.get('keyb', {}).get('main'))
+            context.user_data.clear()
         except Exception as e:
             logging.error(f"Error saving order: {e}")
-            await update.message.reply_text('❌ Произошла ошибка при сохранении заказа. Попробуйте еще раз.')
-    else:
-        await update.message.reply_text('❌ Заказ отменён.')
+            await update.message.reply_text(
+                get_lang_text(
+                    context,
+                    '❌ Произошла ошибка при сохранении заказа. Попробуйте еще раз.',
+                    '❌ Buyurtmani saqlashda xatolik yuz berdi. Iltimos, yana urinib koʻring.'
+                ),
+                reply_markup=context.bot_data.get('keyb', {}).get('main')
+            )
     return ConversationHandler.END
+
+    if text_lower in cancel_variants:
+        await update.message.reply_text(
+            get_lang_text(context, '❌ Заказ отменён.', '❌ Buyurtma bekor qilindi.'),
+            reply_markup=context.bot_data.get('keyb', {}).get('main')
+        )
+        context.user_data.clear()
+        return ConversationHandler.END
+
+    await update.message.reply_text(
+        get_lang_text(
+            context,
+            'Пожалуйста, используйте кнопки ниже: подтвердить или отменить.',
+            'Iltimos, pastdagi tugmalardan foydalaning: tasdiqlash yoki bekor qilish.'
+        )
+    )
+    confirm_text = get_lang_text(context, "Подтвердить", "Tasdiqlash")
+    cancel_text = get_lang_text(context, "Отменить", "Bekor qilish")
+    kb = ReplyKeyboardMarkup([[confirm_text, cancel_text]], one_time_keyboard=True, resize_keyboard=True)
+    await update.message.reply_text(
+        get_lang_text(context, 'Выберите действие:', 'Amalni tanlang:'),
+        reply_markup=kb
+    )
+    return CONFIRM
 
 
 # Function to update order status (called by admin bot)
@@ -1379,15 +1637,15 @@ async def show_cart_summary(update, context):
     summary = "🛒 <b>Ваша корзина:</b>\n\n"
     
     if samsa_items:
-        summary += "<b>🥟 Самса:</b>\n"
+        summary += get_lang_text(context, "<b>🥟 Самса:</b>\n", "<b>🥟 Somsa:</b>\n")
         for key, qty in samsa_items.items():
-            summary += f"• {get_display_name(context, key)} — {qty} шт\n"
+            summary += f"• {get_display_name(context, key)} — {format_quantity(context, qty)}\n"
         summary += "\n"
     
     if packaging_items:
-        summary += "<b>📦 Упаковка:</b>\n"
+        summary += get_lang_text(context, "<b>📦 Упаковка:</b>\n", "<b>📦 Qadoqlash:</b>\n")
         for key, qty in packaging_items.items():
-            summary += f"• {get_display_name(context, key)} — {qty} шт\n"
+            summary += f"• {get_display_name(context, key)} — {format_quantity(context, qty)}\n"
         summary += "\n"
     
     summary += f"💰 <b>Итого:</b> {total:,} сум"
@@ -1397,19 +1655,64 @@ async def show_cart_summary(update, context):
     
     if not samsa_items:
         # Empty cart - only show option to add items
-        buttons.append([InlineKeyboardButton("➕ Добавить самсу", callback_data="back_to_menu")])
-        buttons.append([InlineKeyboardButton("🗑️ Очистить корзину", callback_data="clear_cart")])
+        buttons.append([
+            InlineKeyboardButton(
+                get_lang_text(context, "➕ Добавить самсу", "➕ Somsa qoʻshish"),
+                callback_data="back_to_menu"
+            )
+        ])
+        buttons.append([
+            InlineKeyboardButton(
+                get_lang_text(context, "🗑️ Очистить корзину", "🗑️ Savatni tozalash"),
+                callback_data="clear_cart"
+            )
+        ])
     elif samsa_items and not packaging_items:
         # Has samsa but no packaging - show option to add more samsa or proceed to packaging
-        buttons.append([InlineKeyboardButton("➕ Добавить еще самсу", callback_data="back_to_menu")])
-        buttons.append([InlineKeyboardButton("✏️ Изменить количество", callback_data="edit_cart")])
-        buttons.append([InlineKeyboardButton("✅ Выбрать упаковку", callback_data="done_menu")])
-        buttons.append([InlineKeyboardButton("🗑️ Очистить корзину", callback_data="clear_cart")])
+        buttons.append([
+            InlineKeyboardButton(
+                get_lang_text(context, "➕ Добавить еще самсу", "➕ Yana somsa qoʻshish"),
+                callback_data="back_to_menu"
+            )
+        ])
+        buttons.append([
+            InlineKeyboardButton(
+                get_lang_text(context, "✏️ Изменить количество", "✏️ Miqdorni o'zgartirish"),
+                callback_data="edit_cart"
+            )
+        ])
+        buttons.append([
+            InlineKeyboardButton(
+                get_lang_text(context, "✅ Выбрать упаковку", "✅ Qadoqlashni tanlash"),
+                callback_data="done_menu"
+            )
+        ])
+        buttons.append([
+            InlineKeyboardButton(
+                get_lang_text(context, "🗑️ Очистить корзину", "🗑️ Savatni tozalash"),
+                callback_data="clear_cart"
+            )
+        ])
     elif samsa_items and packaging_items:
         # Has both - show option to edit or proceed
-        buttons.append([InlineKeyboardButton("✏️ Изменить корзину", callback_data="edit_cart")])
-        buttons.append([InlineKeyboardButton("✅ Продолжить заказ", callback_data="confirm_cart")])
-        buttons.append([InlineKeyboardButton("🗑️ Очистить корзину", callback_data="clear_cart")])
+        buttons.append([
+            InlineKeyboardButton(
+                get_lang_text(context, "✏️ Изменить корзину", "✏️ Savatni tahrirlash"),
+                callback_data="edit_cart"
+            )
+        ])
+        buttons.append([
+            InlineKeyboardButton(
+                get_lang_text(context, "✅ Продолжить заказ", "✅ Buyurtmani davom ettirish"),
+                callback_data="confirm_cart"
+            )
+        ])
+        buttons.append([
+            InlineKeyboardButton(
+                get_lang_text(context, "🗑️ Очистить корзину", "🗑️ Savatni tozalash"),
+                callback_data="clear_cart"
+            )
+        ])
     
     kb = InlineKeyboardMarkup(buttons)
     
@@ -1446,26 +1749,35 @@ async def edit_cart_items(update, context):
     
     if not samsa_items:
         await q.edit_message_text(
-            "❌ <b>Корзина пуста!</b>\n\nДобавьте самсу для редактирования.",
+            get_lang_text(
+                context,
+                "❌ <b>Корзина пуста!</b>\n\nДобавьте самсу для редактирования.",
+                "❌ <b>Savat boʻsh!</b>\n\nTahrirlash uchun somsa qoʻshing."
+            ),
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("⬅️ Назад к меню", callback_data="back_to_menu")]
+                [InlineKeyboardButton(get_lang_text(context, "⬅️ Назад к меню", "⬅️ Menyuga qaytish"), callback_data="back_to_menu")]
             ]),
             parse_mode='HTML'
         )
         return ITEM_SELECT
     
     # Show items with edit buttons
-    summary = "✏️ <b>Редактировать корзину:</b>\n\n"
+    summary = get_lang_text(context, "✏️ <b>Редактировать корзину:</b>\n\n", "✏️ <b>Savatni tahrirlash:</b>\n\n")
     buttons = []
     
     for key, qty in samsa_items.items():
-        summary += f"• {get_short_name(context, key)} — {qty} шт\n"
+        summary += f"• {get_short_name(context, key)} — {format_quantity(context, qty)}\n"
         buttons.append([
-            InlineKeyboardButton(f"✏️ {get_short_name(context, key)} ({qty} шт)", callback_data=f'edit_item:{key}'),
+            InlineKeyboardButton(f"✏️ {get_short_name(context, key)} ({format_quantity(context, qty)})", callback_data=f'edit_item:{key}'),
             InlineKeyboardButton(f"🗑️", callback_data=f'remove:{key}')
         ])
     
-    buttons.append([InlineKeyboardButton("⬅️ Назад к корзине", callback_data="back_to_cart")])
+    buttons.append([
+        InlineKeyboardButton(
+            get_lang_text(context, "⬅️ Назад к корзине", "⬅️ Savatga qaytish"),
+            callback_data="back_to_cart"
+        )
+    ])
     
     kb = InlineKeyboardMarkup(buttons)
     
@@ -1494,7 +1806,12 @@ async def edit_specific_item(update, context):
         items = context.user_data.setdefault('items', {})
         qty = items.get(key, 0)
         
-        caption = f"✏️ <b>Редактировать:</b>\n\n🥟 {get_display_name(context, key)}\n💰 {get_text(context, 'price_label')} {PRICES[key]:,} сум\n📦 {get_text(context, 'in_cart')} {qty} шт"
+        caption = (
+            f"✏️ <b>{get_lang_text(context, 'Редактировать:', 'Tahrirlash:')}</b>\n\n"
+            f"🥟 {get_display_name(context, key)}\n"
+            f"💰 {get_text(context, 'price_label')} {PRICES[key]:,} сум\n"
+            f"📦 {get_text(context, 'in_cart')} {format_quantity(context, qty)}"
+        )
         
         keyboard = InlineKeyboardMarkup([
             [
@@ -1502,8 +1819,8 @@ async def edit_specific_item(update, context):
                 InlineKeyboardButton(f'{qty}', callback_data='noop'),
                 InlineKeyboardButton('➕', callback_data=f'inc:{key}')
             ],
-            [InlineKeyboardButton('🗑️ Удалить', callback_data=f'remove:{key}')],
-            [InlineKeyboardButton('⬅️ Назад к корзине', callback_data='back_to_cart')]
+            [InlineKeyboardButton(get_lang_text(context, '🗑️ Удалить', '🗑️ Oʻchirish'), callback_data=f'remove:{key}')],
+            [InlineKeyboardButton(get_lang_text(context, '⬅️ Назад к корзине', '⬅️ Savatga qaytish'), callback_data='back_to_cart')]
         ])
         
         # Try to send with photo using cached file_id or upload new
@@ -1555,7 +1872,13 @@ async def edit_specific_item(update, context):
         
     except Exception as e:
         logging.error(f"Error in edit_specific_item: {e}")
-        await q.message.reply_text("❌ Произошла ошибка при редактировании.")
+        await q.message.reply_text(
+            get_lang_text(
+                context,
+                "❌ Произошла ошибка при редактировании.",
+                "❌ Tahrirlashda xatolik yuz berdi."
+            )
+        )
         return ITEM_EDIT
 
 
@@ -1596,7 +1919,11 @@ async def remove_item(update, context):
             
             # Send confirmation and go back to cart
             await update.effective_chat.send_message(
-                f"🗑️ <b>{get_short_name(context, key)}</b> удален из корзины.",
+                get_lang_text(
+                    context,
+                    f"🗑️ <b>{get_short_name(context, key)}</b> удален из корзины.",
+                    f"🗑️ <b>{get_short_name(context, key)}</b> savatdan olib tashlandi."
+                ),
                 parse_mode='HTML'
             )
             
@@ -1606,20 +1933,28 @@ async def remove_item(update, context):
             try:
                 # Check if the message has text (not a photo message)
                 if q.message.text:
-                    await q.edit_message_text("❌ Товар не найден в корзине.")
+                    await q.edit_message_text(
+                        get_lang_text(context, "❌ Товар не найден в корзине.", "❌ Mahsulot savatda topilmadi.")
+                    )
                 else:
                     # If it's a photo message, send a new text message
-                    await q.message.reply_text("❌ Товар не найден в корзине.")
+                    await q.message.reply_text(
+                        get_lang_text(context, "❌ Товар не найден в корзине.", "❌ Mahsulot savatda topilmadi.")
+                    )
             except Exception as e:
                 logging.error(f"Error editing message in remove_item (not found): {e}")
                 # Always fallback to new message
-                await q.message.reply_text("❌ Товар не найден в корзине.")
+                await q.message.reply_text(
+                    get_lang_text(context, "❌ Товар не найден в корзине.", "❌ Mahsulot savatda topilmadi.")
+                )
         
         return ITEM_EDIT
         
     except Exception as e:
         logging.error(f"Error in remove_item: {e}")
-        await q.message.reply_text("❌ Произошла ошибка при удалении.")
+        await q.message.reply_text(
+            get_lang_text(context, "❌ Произошла ошибка при удалении.", "❌ Oʻchirishda xatolik yuz berdi.")
+        )
         return ITEM_EDIT
 
 
@@ -1655,21 +1990,26 @@ async def cart_command(update, context):
             # In these states, just show read-only cart info without changing state
             if context.user_data.get('customer_name') or context.user_data.get('customer_phone') or context.user_data.get('customer_address') or context.user_data.get('delivery') or context.user_data.get('method'):
                 # Show read-only cart summary during order details phase
-                summary = "🛒 <b>Ваша корзина:</b>\n\n"
-                
-                summary += "<b>🥟 Самса:</b>\n"
-                for key, qty in samsa_items.items():
-                    summary += f"• {get_display_name(context, key)} — {qty} шт\n"
-                summary += "\n"
-                
-                if packaging_items:
-                    summary += "<b>📦 Упаковка:</b>\n"
-                    for key, qty in packaging_items.items():
-                        summary += f"• {get_display_name(context, key)} — {qty} шт\n"
+                summary = get_lang_text(context, "🛒 <b>Ваша корзина:</b>\n\n", "🛒 <b>Savatingiz:</b>\n\n")
+
+                if samsa_items:
+                    summary += get_lang_text(context, "<b>🥟 Самса:</b>\n", "<b>🥟 Somsa:</b>\n")
+                    for key, qty in samsa_items.items():
+                        summary += f"• {get_display_name(context, key)} — {format_quantity(context, qty)}\n"
                     summary += "\n"
-                
-                summary += f"💰 <b>Итого:</b> {total:,} сум\n\n"
-                summary += "💡 Чтобы изменить корзину, нажмите '❌ Отменить заказ' и начните заново"
+
+                if packaging_items:
+                    summary += get_lang_text(context, "<b>📦 Упаковка:</b>\n", "<b>📦 Qadoqlash:</b>\n")
+                    for key, qty in packaging_items.items():
+                        summary += f"• {get_display_name(context, key)} — {format_quantity(context, qty)}\n"
+                    summary += "\n"
+
+                summary += f"💰 <b>{get_text(context, 'total_section')}</b> {total:,} сум\n\n"
+                summary += get_lang_text(
+                    context,
+                    "💡 Чтобы изменить корзину, нажмите '❌ Отменить заказ' и начните заново",
+                    "💡 Savatni o'zgartirish uchun '❌ Buyurtmani bekor qilish' tugmasini bosing va qaytadan boshlang"
+                )
                 
                 await update.message.reply_text(
                     summary,
@@ -1681,16 +2021,18 @@ async def cart_command(update, context):
             
             # Otherwise, show interactive cart summary (can edit)
             await show_cart_summary(update, context)
-            # Don't return any state - we're not in a conversation when called from main menu
-            return None
+            return PACKAGING_SELECT
         
         # Otherwise, try to load from temp cart (cart command outside conversation)
         temp_cart = await load_temp_cart(user_id)
         
         if not temp_cart or not has_meaningful_cart(temp_cart.get('items', {})):
             await update.message.reply_text(
-                "🛒 <b>Ваша корзина пуста</b>\n\n"
-                "Начните оформление заказа, чтобы добавить товары в корзину.",
+                get_lang_text(
+                    context,
+                    "🛒 <b>Ваша корзина пуста</b>\n\nНачните оформление заказа, чтобы добавить товары в корзину.",
+                    "🛒 <b>Savatingiz boʻsh</b>\n\nBuyurtma berishni boshlang, shunda mahsulotlar qoʻshasiz."
+                ),
                 reply_markup=context.bot_data['keyb']['main'],
                 parse_mode='HTML'
             )
@@ -1704,22 +2046,26 @@ async def cart_command(update, context):
         samsa_items = {k: v for k, v in items.items() if k in SAMSA_KEYS and v > 0}
         packaging_items = {k: v for k, v in items.items() if k in PACKAGING_KEYS and v > 0}
         
-        summary = "🛒 <b>Ваша сохраненная корзина:</b>\n\n"
-        
+        summary = get_lang_text(context, "🛒 <b>Ваша сохраненная корзина:</b>\n\n", "🛒 <b>Saqlangan savatingiz:</b>\n\n")
+
         if samsa_items:
-            summary += "<b>🥟 Самса:</b>\n"
+            summary += get_lang_text(context, "<b>🥟 Самса:</b>\n", "<b>🥟 Somsa:</b>\n")
             for key, qty in samsa_items.items():
-                summary += f"• {get_display_name(context, key)} — {qty} шт\n"
+                summary += f"• {get_display_name(context, key)} — {format_quantity(context, qty)}\n"
             summary += "\n"
-        
+
         if packaging_items:
-            summary += "<b>📦 Упаковка:</b>\n"
+            summary += get_lang_text(context, "<b>📦 Упаковка:</b>\n", "<b>📦 Qadoqlash:</b>\n")
             for key, qty in packaging_items.items():
-                summary += f"• {get_display_name(context, key)} — {qty} шт\n"
+                summary += f"• {get_display_name(context, key)} — {format_quantity(context, qty)}\n"
             summary += "\n"
-        
-        summary += f"💰 <b>Итого:</b> {total:,} сум\n\n"
-        summary += "💡 Используйте /order чтобы продолжить заказ"
+
+        summary += f"💰 <b>{get_text(context, 'total_section')}</b> {total:,} сум\n\n"
+        summary += get_lang_text(
+            context,
+            "💡 Используйте /order чтобы продолжить заказ",
+            "💡 Buyurtmani davom ettirish uchun /order buyrug'idan foydalaning"
+        )
         
         await update.message.reply_text(
             summary,
@@ -1733,8 +2079,11 @@ async def cart_command(update, context):
     except Exception as e:
         logging.error(f"Error in cart_command: {e}")
         await update.message.reply_text(
-            "❌ Произошла ошибка при загрузке корзины.\n\n"
-            "Попробуйте начать новый заказ.",
+            get_lang_text(
+                context,
+                "❌ Произошла ошибка при загрузке корзины.\n\nПопробуйте начать новый заказ.",
+                "❌ Savatni yuklashda xatolik yuz berdi.\n\nIltimos, yangi buyurtma boshlang."
+            ),
             reply_markup=context.bot_data['keyb']['main'],
             parse_mode='HTML'
         )
@@ -1751,8 +2100,11 @@ async def cart_from_main_menu(update, context):
         
         if not temp_cart or not has_meaningful_cart(temp_cart.get('items', {})):
             await update.message.reply_text(
-                "🛒 <b>Ваша корзина пуста</b>\n\n"
-                "Начните оформление заказа, чтобы добавить товары в корзину.",
+                get_lang_text(
+                    context,
+                    "🛒 <b>Ваша корзина пуста</b>\n\nНачните оформление заказа, чтобы добавить товары в корзину.",
+                    "🛒 <b>Savatingiz boʻsh</b>\n\nBuyurtma berishni boshlang, shunda mahsulotlar qoʻshasiz."
+                ),
                 reply_markup=context.bot_data['keyb']['main'],
                 parse_mode='HTML'
             )
@@ -1765,22 +2117,26 @@ async def cart_from_main_menu(update, context):
         samsa_items = {k: v for k, v in items.items() if k in SAMSA_KEYS and v > 0}
         packaging_items = {k: v for k, v in items.items() if k in PACKAGING_KEYS and v > 0}
         
-        summary = "🛒 <b>Ваша сохраненная корзина:</b>\n\n"
+        summary = get_lang_text(context, "🛒 <b>Ваша сохраненная корзина:</b>\n\n", "🛒 <b>Saqlangan savatingiz:</b>\n\n")
         
         if samsa_items:
-            summary += "<b>🥟 Самса:</b>\n"
+            summary += get_lang_text(context, "<b>🥟 Самса:</b>\n", "<b>🥟 Somsa:</b>\n")
             for key, qty in samsa_items.items():
-                summary += f"• {get_display_name(context, key)} — {qty} шт\n"
+                summary += f"• {get_display_name(context, key)} — {format_quantity(context, qty)}\n"
             summary += "\n"
         
         if packaging_items:
-            summary += "<b>📦 Упаковка:</b>\n"
+            summary += get_lang_text(context, "<b>📦 Упаковка:</b>\n", "<b>📦 Qadoqlash:</b>\n")
             for key, qty in packaging_items.items():
-                summary += f"• {get_display_name(context, key)} — {qty} шт\n"
+                summary += f"• {get_display_name(context, key)} — {format_quantity(context, qty)}\n"
             summary += "\n"
         
-        summary += f"💰 <b>Итого:</b> {total:,} сум\n\n"
-        summary += "💡 Используйте '🛒 Сделать заказ' чтобы продолжить заказ"
+        summary += f"💰 <b>{get_text(context, 'total_section')}</b> {total:,} сум\n\n"
+        summary += get_lang_text(
+            context,
+            "💡 Используйте '🛒 Сделать заказ' чтобы продолжить заказ",
+            "💡 Buyurtmani davom ettirish uchun '🛒 Buyurtma berish' tugmasidan foydalaning"
+        )
         
         await update.message.reply_text(
             summary,
@@ -1791,7 +2147,11 @@ async def cart_from_main_menu(update, context):
     except Exception as e:
         logging.error(f"Error in cart_from_main_menu: {e}")
         await update.message.reply_text(
-            "❌ Произошла ошибка при загрузке корзины. Попробуйте позже.",
+            get_lang_text(
+                context,
+                "❌ Произошла ошибка при загрузке корзины. Попробуйте позже.",
+                "❌ Savatni yuklashda xatolik yuz berdi. Keyinroq urinib ko'ring."
+            ),
             reply_markup=context.bot_data['keyb']['main']
         )
 
@@ -1828,16 +2188,24 @@ async def handle_order_interruption(update, context):
             # Send response with timeout protection
             try:
                 await update.message.reply_text(
-                    "⏸️ <b>Заказ приостановлен</b>\n\n"
-                    "Ваша корзина сохранена. Вы можете продолжить оформление заказа в любое время, "
-                    "используя команду /cart или кнопку \"🛒 Корзина\".",
+                    get_lang_text(
+                        context,
+                        "⏸️ <b>Заказ приостановлен</b>\n\nВаша корзина сохранена. Вы можете продолжить оформление заказа в любое время, используя команду /cart или кнопку \"🛒 Корзина\".",
+                        "⏸️ <b>Buyurtma toʻxtatildi</b>\n\nSavat saqlandi. Istalgan payt /cart buyrugʻi yoki \"🛒 Savat\" tugmasi orqali davom ettirishingiz mumkin."
+                    ),
                     reply_markup=context.bot_data.get('keyb', {}).get('main'),
                     parse_mode='HTML'
                 )
             except Exception as reply_error:
                 logging.error(f"Error sending interruption message: {reply_error}")
                 # Try simple fallback
-                await update.message.reply_text("⏸️ Заказ приостановлен. Ваша корзина сохранена.")
+                await update.message.reply_text(
+                    get_lang_text(
+                        context,
+                        "⏸️ Заказ приостановлен. Ваша корзина сохранена.",
+                        "⏸️ Buyurtma toʻxtatildi. Savat saqlandi."
+                    )
+                )
         else:
             # Clear empty cart and user data
             try:
@@ -1849,14 +2217,19 @@ async def handle_order_interruption(update, context):
             
             try:
                 await update.message.reply_text(
-                    "✅ Вы вышли из режима заказа.\n\n"
-                    "Начните новый заказ, когда будете готовы!",
+                    get_lang_text(
+                        context,
+                        "✅ Вы вышли из режима заказа.\n\nНачните новый заказ, когда будете готовы!",
+                        "✅ Buyurtma rejimidan chiqdingiz.\n\nTayyor bo'lganda yangi buyurtmani boshlang!"
+                    ),
                     reply_markup=context.bot_data.get('keyb', {}).get('main'),
                     parse_mode='HTML'
                 )
             except Exception as reply_error:
                 logging.error(f"Error sending exit message: {reply_error}")
-                await update.message.reply_text("✅ Вы вышли из режима заказа.")
+                await update.message.reply_text(
+                    get_lang_text(context, "✅ Вы вышли из режима заказа.", "✅ Buyurtma rejimidan chiqdingiz.")
+                )
         
         # Force conversation to end
         return ConversationHandler.END
@@ -1866,7 +2239,9 @@ async def handle_order_interruption(update, context):
         # Emergency cleanup
         try:
             context.user_data.clear()
-            await update.message.reply_text("✅ Вы вышли из режима заказа.")
+            await update.message.reply_text(
+                get_lang_text(context, "✅ Вы вышли из режима заказа.", "✅ Buyurtma rejimidan chiqdingiz.")
+            )
         except Exception as emergency_error:
             logging.error(f"Emergency cleanup failed: {emergency_error}")
         return ConversationHandler.END
@@ -1881,7 +2256,11 @@ async def finish_menu_from_keyboard(update, context):
     samsa_items = {k: v for k, v in items.items() if k in SAMSA_KEYS and v > 0}
     if not samsa_items:
         await update.message.reply_text(
-            "❌ <b>Корзина пуста!</b>\n\nДобавьте хотя бы одну самсу для оформления заказа.",
+            get_lang_text(
+                context,
+                "❌ <b>Корзина пуста!</b>\n\nДобавьте хотя бы одну самсу для оформления заказа.",
+                "❌ <b>Savat boʻsh!</b>\n\nBuyurtma berish uchun kamida bitta somsa qoʻshing."
+            ),
             parse_mode='HTML'
         )
         return ITEM_SELECT
@@ -1891,12 +2270,12 @@ async def finish_menu_from_keyboard(update, context):
     context.user_data['total'] = total
     
     # Show cart summary
-    lines = [f"• {get_display_name(context, k)} — {v} шт" for k, v in samsa_items.items()]
+    lines = [f"• {get_display_name(context, k)} — {format_quantity(context, v)}" for k, v in samsa_items.items()]
     receipt = "\n".join(lines)
     text = (
-        "🛒 <b>Корзина:</b>\n"
+        f"{get_lang_text(context, '🛒 <b>Корзина:</b>\n', '🛒 <b>Savat:</b>\n')}"
         f"{receipt}\n\n"
-        f"💰 <b>Итого:</b> {total:,} сум"
+        f"💰 <b>{get_text(context, 'total_section')}</b> {total:,} сум"
     )
     
     await update.message.reply_text(text, parse_mode='HTML')
@@ -1917,7 +2296,11 @@ async def cancel_order(update, context):
     context.user_data.clear()
     
     await update.message.reply_text(
-        "❌ <b>Заказ отменён</b>\n\nВаша корзина очищена.",
+        get_lang_text(
+            context,
+            "❌ <b>Заказ отменён</b>\n\nВаша корзина очищена.",
+            "❌ <b>Buyurtma bekor qilindi</b>\n\nSavat tozalandi."
+        ),
         reply_markup=context.bot_data['keyb']['main'],
         parse_mode='HTML'
     )
@@ -1929,8 +2312,11 @@ async def cancel_order(update, context):
 async def block_side_buttons(update, context):
     """Block side buttons during active ordering - only allow Cancel Order"""
     await update.message.reply_text(
-        "⚠️ <b>Вы в процессе оформления заказа</b>\n\n"
-        "Пожалуйста, завершите текущий заказ или нажмите '❌ Отменить заказ' чтобы вернуться в главное меню.",
+        get_lang_text(
+            context,
+            "⚠️ <b>Вы в процессе оформления заказа</b>\n\nПожалуйста, завершите текущий заказ или нажмите '❌ Отменить заказ', чтобы вернуться в главное меню.",
+            "⚠️ <b>Siz buyurtma rasmiylashtirish jarayonidasiz</b>\n\nIltimos, joriy buyurtmani yakunlang yoki bosh menyuga qaytish uchun '❌ Buyurtmani bekor qilish' tugmasini bosing."
+        ),
         parse_mode='HTML'
     )
     # Stay in the current state
@@ -1952,12 +2338,12 @@ order_conv_handler = ConversationHandler(
             CallbackQueryHandler(select_samsa, pattern=r'^samsa:'),
             CallbackQueryHandler(finish_menu, pattern=r'^done_menu$'),
             # Handle keyboard buttons during item selection
-            MessageHandler(filters.Regex('^✅ (Завершить заказ|Buyurtmani yakunlash)$'), finish_menu_from_keyboard),
-            MessageHandler(filters.Regex('^❌ (Отменить заказ|Buyurtmani bekor qilish)$'), cancel_order),
-            MessageHandler(filters.Regex('^🛒 (Корзина|Savat)$'), cart_command),
+            MessageHandler(filters.Regex(FINISH_BUTTON_PATTERN), finish_menu_from_keyboard),
+            MessageHandler(filters.Regex(CANCEL_BUTTON_PATTERN), cancel_order),
+            MessageHandler(filters.Regex(CART_BUTTON_PATTERN), cart_command),
             # Block all other side buttons
             MessageHandler(
-                filters.Regex('^(💬 Отзывы|ℹ️ О нас|🔥 Акции|⏰ Время работы|🌐 Язык|❓ Помощь|📞 Контакты|📝 Оставить отзыв|🇷🇺 Русский|🇺🇿 O\'zbek)$'),
+                filters.Regex(SIDE_BUTTON_PATTERN),
                 block_side_buttons
             ),
         ],
@@ -1971,12 +2357,12 @@ order_conv_handler = ConversationHandler(
             CallbackQueryHandler(back_to_cart, pattern=r'^back_to_cart$'),
             CallbackQueryHandler(noop, pattern=r'^noop$'),
             # Handle keyboard buttons during item editing
-            MessageHandler(filters.Regex('^✅ (Завершить заказ|Buyurtmani yakunlash)$'), finish_menu_from_keyboard),
-            MessageHandler(filters.Regex('^❌ (Отменить заказ|Buyurtmani bekor qilish)$'), cancel_order),
-            MessageHandler(filters.Regex('^🛒 (Корзина|Savat)$'), cart_command),
+            MessageHandler(filters.Regex(FINISH_BUTTON_PATTERN), finish_menu_from_keyboard),
+            MessageHandler(filters.Regex(CANCEL_BUTTON_PATTERN), cancel_order),
+            MessageHandler(filters.Regex(CART_BUTTON_PATTERN), cart_command),
             # Block all other side buttons
             MessageHandler(
-                filters.Regex('^(💬 Отзывы|ℹ️ О нас|🔥 Акции|⏰ Время работы|🌐 Язык|❓ Помощь|📞 Контакты|📝 Оставить отзыв|🇷🇺 Русский|🇺🇿 O\'zbek)$'),
+                filters.Regex(SIDE_BUTTON_PATTERN),
                 block_side_buttons
             ),
         ],
@@ -1989,82 +2375,82 @@ order_conv_handler = ConversationHandler(
             CallbackQueryHandler(back_to_menu, pattern=r'^back_to_menu$'),
             CallbackQueryHandler(finish_menu, pattern=r'^done_menu$'),
             # Handle keyboard buttons
-            MessageHandler(filters.Regex('^❌ Отменить заказ$'), cancel_order),
-            MessageHandler(filters.Regex('^🛒 (Корзина|Savat)$'), cart_command),
+            MessageHandler(filters.Regex(CANCEL_BUTTON_PATTERN), cancel_order),
+            MessageHandler(filters.Regex(CART_BUTTON_PATTERN), cart_command),
             # Block all other side buttons
             MessageHandler(
-                filters.Regex('^(💬 Отзывы|ℹ️ О нас|🔥 Акции|⏰ Время работы|🌐 Язык|❓ Помощь|📞 Контакты|📝 Оставить отзыв|🇷🇺 Русский|🇺🇿 O\'zbek|✅ Завершить заказ)$'),
+                filters.Regex(SIDE_OR_FINISH_PATTERN),
                 block_side_buttons
             ),
         ],
         NAME:       [
-            MessageHandler(filters.Regex('^❌ Отменить заказ$'), cancel_order),
-            MessageHandler(filters.Regex('^🛒 (Корзина|Savat)$'), cart_command),
+            MessageHandler(filters.Regex(CANCEL_BUTTON_PATTERN), cancel_order),
+            MessageHandler(filters.Regex(CART_BUTTON_PATTERN), cart_command),
             MessageHandler(
-                filters.Regex('^(💬 Отзывы|ℹ️ О нас|🔥 Акции|⏰ Время работы|🌐 Язык|❓ Помощь|📞 Контакты|📝 Оставить отзыв|🇷🇺 Русский|🇺🇿 O\'zbek|✅ Завершить заказ)$'),
+                filters.Regex(SIDE_OR_FINISH_PATTERN),
                 block_side_buttons
             ),
             MessageHandler(filters.TEXT & ~filters.COMMAND, handle_name_input)
         ],
         PHONE:       [
-            MessageHandler(filters.Regex('^❌ Отменить заказ$'), cancel_order),
-            MessageHandler(filters.Regex('^🛒 (Корзина|Savat)$'), cart_command),
+            MessageHandler(filters.Regex(CANCEL_BUTTON_PATTERN), cancel_order),
+            MessageHandler(filters.Regex(CART_BUTTON_PATTERN), cart_command),
             MessageHandler(
-                filters.Regex('^(💬 Отзывы|ℹ️ О нас|🔥 Акции|⏰ Время работы|🌐 Язык|❓ Помощь|📞 Контакты|📝 Оставить отзыв|🇷🇺 Русский|🇺🇿 O\'zbek|✅ Завершить заказ)$'),
+                filters.Regex(SIDE_OR_FINISH_PATTERN),
                 block_side_buttons
             ),
             MessageHandler(filters.TEXT & ~filters.COMMAND, handle_phone_input)
         ],
         ADDRESS:       [
-            MessageHandler(filters.Regex('^❌ Отменить заказ$'), cancel_order),
-            MessageHandler(filters.Regex('^🛒 (Корзина|Savat)$'), cart_command),
+            MessageHandler(filters.Regex(CANCEL_BUTTON_PATTERN), cancel_order),
+            MessageHandler(filters.Regex(CART_BUTTON_PATTERN), cart_command),
             MessageHandler(
-                filters.Regex('^(💬 Отзывы|ℹ️ О нас|🔥 Акции|⏰ Время работы|🌐 Язык|❓ Помощь|📞 Контакты|📝 Оставить отзыв|🇷🇺 Русский|🇺🇿 O\'zbek|✅ Завершить заказ)$'),
+                filters.Regex(SIDE_OR_FINISH_PATTERN),
                 block_side_buttons
             ),
             MessageHandler(filters.TEXT & ~filters.COMMAND, handle_address_input)
         ],
         DELIVERY:      [
-            MessageHandler(filters.Regex('^❌ Отменить заказ$'), cancel_order),
-            MessageHandler(filters.Regex('^🛒 (Корзина|Savat)$'), cart_command),
+            MessageHandler(filters.Regex(CANCEL_BUTTON_PATTERN), cancel_order),
+            MessageHandler(filters.Regex(CART_BUTTON_PATTERN), cart_command),
             MessageHandler(
-                filters.Regex('^(💬 Отзывы|ℹ️ О нас|🔥 Акции|⏰ Время работы|🌐 Язык|❓ Помощь|📞 Контакты|📝 Оставить отзыв|🇷🇺 Русский|🇺🇿 O\'zbek)$'),
+                filters.Regex(SIDE_BUTTON_PATTERN),
                 block_side_buttons
             ),
             MessageHandler(filters.TEXT & ~filters.COMMAND, order_contact)
         ],
         TIME_CHOICE:   [
-            MessageHandler(filters.Regex('^❌ Отменить заказ$'), cancel_order),
-            MessageHandler(filters.Regex('^🛒 (Корзина|Savat)$'), cart_command),
+            MessageHandler(filters.Regex(CANCEL_BUTTON_PATTERN), cancel_order),
+            MessageHandler(filters.Regex(CART_BUTTON_PATTERN), cart_command),
             MessageHandler(
-                filters.Regex('^(💬 Отзывы|ℹ️ О нас|🔥 Акции|⏰ Время работы|🌐 Язык|❓ Помощь|📞 Контакты|📝 Оставить отзыв|🇷🇺 Русский|🇺🇿 O\'zbek)$'),
+                filters.Regex(SIDE_BUTTON_PATTERN),
                 block_side_buttons
             ),
             MessageHandler(filters.TEXT & ~filters.COMMAND, order_time)
         ],
         PAYMENT:       [
-            MessageHandler(filters.Regex('^❌ Отменить заказ$'), cancel_order),
-            MessageHandler(filters.Regex('^🛒 (Корзина|Savat)$'), cart_command),
+            MessageHandler(filters.Regex(CANCEL_BUTTON_PATTERN), cancel_order),
+            MessageHandler(filters.Regex(CART_BUTTON_PATTERN), cart_command),
             MessageHandler(
-                filters.Regex('^(💬 Отзывы|ℹ️ О нас|🔥 Акции|⏰ Время работы|🌐 Язык|❓ Помощь|📞 Контакты|📝 Оставить отзыв|🇷🇺 Русский|🇺🇿 O\'zbek)$'),
+                filters.Regex(SIDE_BUTTON_PATTERN),
                 block_side_buttons
             ),
-            MessageHandler(filters.Regex('^(💵 Наличные|💳 Оплатить по карте)$'), order_payment)
+            MessageHandler(filters.Regex(PAYMENT_BUTTON_PATTERN), order_payment)
         ],
         VERIFY_PAYMENT:[
-            MessageHandler(filters.Regex('^❌ Отменить заказ$'), cancel_order),
-            MessageHandler(filters.Regex('^🛒 (Корзина|Savat)$'), cart_command),
+            MessageHandler(filters.Regex(CANCEL_BUTTON_PATTERN), cancel_order),
+            MessageHandler(filters.Regex(CART_BUTTON_PATTERN), cart_command),
             MessageHandler(
-                filters.Regex('^(💬 Отзывы|ℹ️ О нас|🔥 Акции|⏰ Время работы|🌐 Язык|❓ Помощь|📞 Контакты|📝 Оставить отзыв|🇷🇺 Русский|🇺🇿 O\'zbek)$'),
+                filters.Regex(SIDE_BUTTON_PATTERN),
                 block_side_buttons
             ),
             MessageHandler(filters.TEXT & ~filters.COMMAND, verify_payment)
         ],
         CONFIRM:       [
-            MessageHandler(filters.Regex('^❌ Отменить заказ$'), cancel_order),
-            MessageHandler(filters.Regex('^🛒 (Корзина|Savat)$'), cart_command),
+            MessageHandler(filters.Regex(CANCEL_BUTTON_PATTERN), cancel_order),
+            MessageHandler(filters.Regex(CART_BUTTON_PATTERN), cart_command),
             MessageHandler(
-                filters.Regex('^(💬 Отзывы|ℹ️ О нас|🔥 Акции|⏰ Время работы|🌐 Язык|❓ Помощь|📞 Контакты|📝 Оставить отзыв|🇷🇺 Русский|🇺🇿 O\'zbek)$'),
+                filters.Regex(SIDE_BUTTON_PATTERN),
                 block_side_buttons
             ),
             MessageHandler(filters.TEXT & ~filters.COMMAND, order_confirm)

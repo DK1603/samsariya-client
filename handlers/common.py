@@ -40,6 +40,11 @@ TEXTS = {
         'btn_language':'🌐 Язык',
         'btn_help':     '❓ Помощь',
         'btn_back':     '◀️ Назад',
+        'btn_contacts': '📞 Контакты',
+        'btn_leave_review': '📝 Оставить отзыв',
+        'lang_choice_ru': '🇷🇺 Русский',
+        'lang_choice_uz': '🇺🇿 O\'zbek',
+        'pieces_suffix': 'шт',
         # Order flow texts
         'cart_saved': 'У вас есть сохраненная корзина:',
         'samsa_section': 'Самса:',
@@ -153,10 +158,15 @@ TEXTS = {
         'btn_language':'🌐 Til',
         'btn_help':     '❓ Yordam',
         'btn_back':     '◀️ Orqaga',
+        'btn_contacts': '📞 Aloqa',
+        'btn_leave_review': '📝 Fikr qoldirish',
+        'lang_choice_ru': '🇷🇺 Rus tili',
+        'lang_choice_uz': '🇺🇿 O\'zbek tili',
+        'pieces_suffix': 'ta',
         # Order flow texts
         'cart_saved': 'Sizda saqlangan savat bor:',
         'samsa_section': 'Somsa:',
-        'packaging_section': 'Ombordagi:',
+        'packaging_section': 'Qadoqlash:',
         'total_section': 'Jami:',
         'what_to_do': 'Nima qilmoqchisiz?',
         'continue_cart': 'Bu savat bilan davom etish',
@@ -176,9 +186,9 @@ TEXTS = {
         'back_to_selection': 'Tanlovga qaytish',
         'cart_section': 'Savat:',
         'total_cost': 'Jami:',
-        'now_choose_packaging': 'Endi ompordagi tanlang:',
-        'packaging_required': 'Buyurtma berish uchun ompordagi majburiy',
-        'choose_packaging': 'Buyurtmangiz uchun ompordagi tanlang:',
+        'now_choose_packaging': 'Endi qadoqlashni tanlang:',
+        'packaging_required': 'Buyurtma berish uchun qadoqlash majburiy',
+        'choose_packaging': 'Buyurtmangiz uchun qadoqlashni tanlang:',
         'back_to_cart': 'Savatga qaytish',
         'added_to_cart': 'Qoʻshildi:',
         'proceeding_to_order': 'Buyurtma berishga oʻtamiz...',
@@ -206,7 +216,7 @@ TEXTS = {
         'order_accepted': 'Buyurtmangiz qabul qilindi! Tez orada siz bilan bogʻlanamiz.',
         'order_summary': 'Buyurtmangiz:',
         'samsa_items': 'Somsa:',
-        'packaging_items': 'Ompordagi:',
+        'packaging_items': 'Qadoqlash:',
         'sum_total': 'Summa:',
         'name_field': 'Ism:',
         'phone_field': 'Telefon:',
@@ -258,9 +268,9 @@ async def init_bot_data(app):
     t = app.bot_data['texts']
     # build keyboards - 2 buttons per row layout
     main_keyboard = [
-        [t['btn_order'], "📞 Контакты"],
+        [t['btn_order'], t['btn_contacts']],
         [t['btn_hours'], t['btn_promo']],
-        [t['btn_reviews'], "📝 Оставить отзыв"],
+        [t['btn_reviews'], t['btn_leave_review']],
         [t['btn_help'], t['btn_language']],
     ]
     app.bot_data['keyb'] = {
@@ -304,9 +314,9 @@ async def handle_language_choice(update, context: ContextTypes.DEFAULT_TYPE):
     # rebuild keyboards - 2 buttons per row layout
     t = context.bot_data['texts']
     main_keyboard = [
-        [t['btn_order'], "📞 Контакты"],
+        [t['btn_order'], t['btn_contacts']],
         [t['btn_hours'], t['btn_promo']],
-        [t['btn_reviews'], "📝 Оставить отзыв"],
+        [t['btn_reviews'], t['btn_leave_review']],
         [t['btn_help'], t['btn_language']],
     ]
     context.bot_data['keyb'] = {
@@ -411,3 +421,13 @@ def get_short_name(context, item_key):
     lang = context.bot_data.get('lang', 'ru')
     from .catalog import SHORT_NAMES
     return SHORT_NAMES[lang].get(item_key, item_key)
+
+
+def get_current_language(context) -> str:
+    """Return current language code (ru/uz)."""
+    return context.bot_data.get('lang', 'ru')
+
+
+def get_lang_text(context, ru_text: str, uz_text: str) -> str:
+    """Return text based on active language."""
+    return ru_text if get_current_language(context) == 'ru' else uz_text
