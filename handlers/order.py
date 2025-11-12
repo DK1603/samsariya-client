@@ -539,7 +539,7 @@ async def inc_item(update, context):
             InlineKeyboardButton(f'{qty}', callback_data='noop'),
             InlineKeyboardButton('➕', callback_data=f'inc:{key}')
         ],
-        [InlineKeyboardButton(f'✅ {get_text(context, "finish_with_samsa")}', callback_data=f'finish_item:{key}')],
+        [InlineKeyboardButton(get_lang_text(context, '✅ Готово', '✅ Tayyor'), callback_data='back_to_cart')],
         [InlineKeyboardButton(f'⬅️ {get_text(context, "back_to_menu")}', callback_data='back_to_menu')]
     ])
     
@@ -578,7 +578,7 @@ async def dec_item(update, context):
             InlineKeyboardButton(f'{qty}', callback_data='noop'),
             InlineKeyboardButton('➕', callback_data=f'inc:{key}')
         ],
-        [InlineKeyboardButton(f'✅ {get_text(context, "finish_with_samsa")}', callback_data=f'finish_item:{key}')],
+        [InlineKeyboardButton(get_lang_text(context, '✅ Готово', '✅ Tayyor'), callback_data='back_to_cart')],
         [InlineKeyboardButton(f'⬅️ {get_text(context, "back_to_menu")}', callback_data='back_to_menu')]
     ])
     
@@ -858,20 +858,144 @@ async def select_packaging(update, context):
     return await confirm_cart(update, context)
 
 
+def _build_cart_summary_text(context) -> str:
+    """Build cart summary text"""
+    items = context.user_data.get('items', {})
+    total = context.user_data.get('total', 0)
+    
+    samsa_items = {k: v for k, v in items.items() if k in SAMSA_KEYS and v > 0}
+    packaging_items = {k: v for k, v in items.items() if k in PACKAGING_KEYS and v > 0}
+    
+    summary = get_lang_text(context, "🛒 <b>Ваша корзина:</b>\n\n", "🛒 <b>Savatingiz:</b>\n\n")
+    
+    if samsa_items:
+        summary += get_lang_text(context, "<b>🥟 Самса:</b>\n", "<b>🥟 Somsa:</b>\n")
+        for key, qty in samsa_items.items():
+            summary += f"• {get_display_name(context, key)} — {format_quantity(context, qty)}\n"
+        summary += "\n"
+    
+    if packaging_items:
+        summary += get_lang_text(context, "<b>📦 Упаковка:</b>\n", "<b>📦 Qadoqlash:</b>\n")
+        for key, qty in packaging_items.items():
+            summary += f"• {get_display_name(context, key)} — {format_quantity(context, qty)}\n"
+        summary += "\n"
+    
+    summary += f"💰 <b>{get_text(context, 'total_section')}</b> {total:,} сум"
+    
+    return summary
+
+
+def _build_cart_buttons(context) -> InlineKeyboardMarkup:
+    """Build cart action buttons"""
+    items = context.user_data.get('items', {})
+    samsa_items = {k: v for k, v in items.items() if k in SAMSA_KEYS and v > 0}
+    packaging_items = {k: v for k, v in items.items() if k in PACKAGING_KEYS and v > 0}
+    
+    buttons = []
+    
+    if not samsa_items:
+        # Empty cart - only show option to add items
+        buttons.append([
+            InlineKeyboardButton(
+                get_lang_text(context, "➕ Добавить самсу", "➕ Somsa qoʻshish"),
+                callback_data="back_to_menu"
+            )
+        ])
+        buttons.append([
+            InlineKeyboardButton(
+                get_lang_text(context, "🗑️ Очистить корзину", "🗑️ Savatni tozalash"),
+                callback_data="clear_cart"
+            )
+        ])
+    elif samsa_items and not packaging_items:
+        # Has samsa but no packaging
+        buttons.append([
+            InlineKeyboardButton(
+                get_lang_text(context, "➕ Добавить еще самсу", "➕ Yana somsa qoʻshish"),
+                callback_data="back_to_menu"
+            )
+        ])
+        buttons.append([
+            InlineKeyboardButton(
+                get_lang_text(context, "✏️ Изменить количество", "✏️ Miqdorni o'zgartirish"),
+                callback_data="edit_cart"
+            )
+        ])
+        buttons.append([
+            InlineKeyboardButton(
+                get_lang_text(context, "✅ Выбрать упаковку", "✅ Qadoqlashni tanlash"),
+                callback_data="done_menu"
+            )
+        ])
+        buttons.append([
+            InlineKeyboardButton(
+                get_lang_text(context, "🗑️ Очистить корзину", "🗑️ Savatni tozalash"),
+                callback_data="clear_cart"
+            )
+        ])
+    elif samsa_items and packaging_items:
+        # Has both
+        buttons.append([
+            InlineKeyboardButton(
+                get_lang_text(context, "✏️ Изменить корзину", "✏️ Savatni tahrirlash"),
+                callback_data="edit_cart"
+            )
+        ])
+        buttons.append([
+            InlineKeyboardButton(
+                get_lang_text(context, "✅ Продолжить заказ", "✅ Buyurtmani davom ettirish"),
+                callback_data="confirm_cart"
+            )
+        ])
+        buttons.append([
+            InlineKeyboardButton(
+                get_lang_text(context, "🗑️ Очистить корзину", "🗑️ Savatni tozalash"),
+                callback_data="clear_cart"
+            )
+        ])
+    
+    return InlineKeyboardMarkup(buttons)
+
+
 async def back_to_cart(update, context):
     """Go back to cart summary from editing"""
     # Check if it's from callback query or direct call
     if hasattr(update, 'callback_query') and update.callback_query:
         q = update.callback_query
         await q.answer()
+        
+        # Delete the current message (photo or text) to avoid conflicts
+        try:
+            await q.message.delete()
+        except Exception as e:
+            logging.error(f"Error deleting message in back_to_cart: {e}")
     
-    # Recalculate total
+    # Recalculate total and save to temp cart
     items = context.user_data.get('items', {})
     total = sum(PRICES[k] * v for k, v in items.items())
     context.user_data['total'] = total
     
-    # Show cart summary
-    await show_cart_summary(update, context)
+    # Save to temp cart
+    user_id = update.effective_user.id
+    samsa_items = {k: v for k, v in items.items() if k in SAMSA_KEYS and v > 0}
+    packaging_items = {k: v for k, v in items.items() if k in PACKAGING_KEYS and v > 0}
+    
+    cart_data = {
+        'items': items,
+        'total': total,
+        'has_samsa': len(samsa_items) > 0,
+        'has_packaging': len(packaging_items) > 0
+    }
+    
+    await save_temp_cart(user_id, cart_data)
+    
+    # Send a fresh cart summary message
+    await update.effective_chat.send_message(
+        text=_build_cart_summary_text(context),
+        reply_markup=_build_cart_buttons(context),
+        parse_mode='HTML'
+    )
+    
     return PACKAGING_SELECT
 
 
@@ -1821,8 +1945,8 @@ async def edit_specific_item(update, context):
                 InlineKeyboardButton(f'{qty}', callback_data='noop'),
                 InlineKeyboardButton('➕', callback_data=f'inc:{key}')
             ],
-            [InlineKeyboardButton(get_lang_text(context, '🗑️ Удалить', '🗑️ Oʻchirish'), callback_data=f'remove:{key}')],
-            [InlineKeyboardButton(get_lang_text(context, '⬅️ Назад к корзине', '⬅️ Savatga qaytish'), callback_data='back_to_cart')]
+            [InlineKeyboardButton(get_lang_text(context, '✅ Готово', '✅ Tayyor'), callback_data='back_to_cart')],
+            [InlineKeyboardButton(get_lang_text(context, '🗑️ Удалить', '🗑️ Oʻchirish'), callback_data=f'remove:{key}')]
         ])
         
         # Try to send with photo using cached file_id or upload new
