@@ -1325,7 +1325,8 @@ async def order_confirm(update, context):
 
             if is_card_payment:
                 if context.user_data.get('payment_verified'):
-                    order_status = 'pending_admin_confirmation'
+                    # Use 'new' status but flag for manual verification
+                    order_status = 'new'
                     status_message = get_lang_text(
                         context,
                         '⏳ Заказ отправлен на подтверждение администратором. Ожидайте проверки оплаты.',
@@ -1368,6 +1369,7 @@ async def order_confirm(update, context):
                     'payment_verified': context.user_data.get('payment_verified', False),
                     'payment_amount': context.user_data.get('payment_amount', 0),
                     'is_preorder': is_preorder,
+                    'requires_payment_check': is_card_payment and context.user_data.get('payment_verified', False),
                     'created_at': datetime.now(timezone.utc),
                 }
                 col = get_orders_collection()
