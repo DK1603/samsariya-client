@@ -21,7 +21,7 @@ TEXTS = {
         'promo': (
             'Акции и новинки:\n'
             '- Самса с тыквой (сезонная)\n'
-            '- Скидка 10% при оплате через Payme'
+            '- Скидка 5% при оплате через Payme'
         ),
         'working_hours': 'Заказы принимаем с 9:00 до 17:00. Доставка по Ташкенту — 1–2 часа.',
         'payments': 'Оплатить наличными или картой через Payme (100% предоплата со скидкой).',
@@ -139,7 +139,7 @@ TEXTS = {
         'promo': (
             'Aksiya va yangiliklar:\n'
             '- Qovoqli somsa (fasliy)\n'
-            '- Payme orqali to‘lovda 10% chegirma'
+            '- Payme orqali to‘lovda 5% chegirma'
         ),
         'working_hours': 'Buyurtmalar 9:00–17:00 qabul qilinadi. Toshkent bo‘ylab 1–2 soat ichida yetkazib beramiz.',
         'payments': 'Naqd yoki Payme orqali (100% oldindan to‘lov, chegirma bilan).',
@@ -363,7 +363,7 @@ async def help_command(update, context: ContextTypes.DEFAULT_TYPE):
 • Заказы принимаем с 9:00 до 17:00
 • Доставка по Ташкенту 1-2 часа
 • Оплата наличными или картой
-• Скидка 10% при оплате через Payme"""
+• Скидка 5% при оплате через Payme"""
     else:  # uz
         help_text = """🤖 <b>Samsariya bot yordami</b>
 
@@ -398,7 +398,7 @@ async def help_command(update, context: ContextTypes.DEFAULT_TYPE):
 • Buyurtmalar 9:00-17:00 qabul qilinadi
 • Toshkent bo'ylab 1-2 soat ichida yetkazib beramiz
 • Naqd yoki karta orqali to'lov
-• Payme orqali to'lovda 10% chegirma"""
+• Payme orqali to'lovda 5% chegirma"""
     
     await update.message.reply_text(help_text, parse_mode='HTML', reply_markup=context.bot_data['keyb']['main'])
 
