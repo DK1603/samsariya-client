@@ -332,10 +332,33 @@ async def initialize_database() -> None:
 
 
 async def get_availability_dict() -> Dict[str, bool]:
+    """
+    Get availability status for all items.
+    Reads from root-level fields (preferred) or items subdocument (fallback).
+    Returns dict with item keys and their availability (True/False).
+    Default is True if item is not in the availability document.
+    """
     doc = await get_availability_collection().find_one({'_id': 'availability'})
-    if doc and isinstance(doc.get('items'), dict):
-        return {k: bool(v) for k, v in doc['items'].items()}
-    # Fallback to file if any
+    
+    if doc and isinstance(doc, dict):
+        # Extract root-level boolean fields (excluding metadata)
+        excluded_keys = {'_id', 'items', 'migrated_at', 'synced_at'}
+        availability = {}
+        
+        # First, try to get from root-level fields
+        for key, value in doc.items():
+            if key not in excluded_keys and isinstance(value, bool):
+                availability[key] = value
+        
+        # If we found root-level fields, use them
+        if availability:
+            return availability
+        
+        # Fallback to items subdocument
+        if isinstance(doc.get('items'), dict):
+            return {k: bool(v) for k, v in doc['items'].items()}
+    
+    # Fallback to file if MongoDB fails
     path = AVAILABILITY_FILE
     if os.path.exists(path):
         try:
@@ -345,6 +368,22 @@ async def get_availability_dict() -> Dict[str, bool]:
                 return {k: bool(v) for k, v in avail.items()}
         except Exception:
             pass
+    
     return {}
+
+
+async def is_item_available(key: str) -> bool:
+    """
+    Check if a specific item is available for ordering.
+    Returns True if available or not found (default), False if explicitly disabled.
+    """
+    try:
+        availability = await get_availability_dict()
+        # Default to True if item not in availability dict
+        return availability.get(key, True)
+    except Exception as e:
+        logging.error(f"Error checking availability for {key}: {e}")
+        # Default to True on error to avoid blocking orders
+        return True
 
 

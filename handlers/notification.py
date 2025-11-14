@@ -6,7 +6,7 @@ from typing import Optional, Dict, Any
 from telegram import Bot
 from telegram.error import TelegramError
 
-from .mongo import get_notifications_collection, get_orders_collection
+from .mongo import get_notifications_collection, get_orders_collection, get_availability_dict
 
 logger = logging.getLogger(__name__)
 
@@ -134,9 +134,10 @@ async def send_pending_notifications(bot: Bot) -> None:
 class NotificationChecker:
     """Background task to check and send notifications periodically."""
     
-    def __init__(self, bot: Bot, interval: int = 30):
+    def __init__(self, bot: Bot, interval: int = 30, bot_data: Optional[Dict[str, Any]] = None):
         self.bot = bot
         self.interval = interval
+        self.bot_data = bot_data or {}
         self._task: Optional[asyncio.Task] = None
         self._running = False
     
@@ -161,12 +162,23 @@ class NotificationChecker:
         logger.info("Notification checker stopped")
     
     async def _run(self) -> None:
-        """Main loop for checking notifications."""
+        """Main loop for checking notifications and refreshing availability."""
         while self._running:
             try:
                 # Process client notifications only
                 # Admin notifications should be handled by admin bot
                 await send_pending_notifications(self.bot)
+                
+                # Refresh availability data from MongoDB
+                # This ensures the bot picks up admin changes without restart
+                try:
+                    availability = await get_availability_dict()
+                    if availability and self.bot_data is not None:
+                        self.bot_data['avail'] = availability
+                        logger.debug(f"Availability refreshed: {len(availability)} items")
+                except Exception as e:
+                    logger.error(f"Error refreshing availability: {e}")
+                    
             except Exception as e:
                 logger.error(f"Error in notification checker loop: {e}")
             

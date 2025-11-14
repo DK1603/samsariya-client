@@ -256,11 +256,15 @@ def main():
         # Start notification checker only if MongoDB is available
         if application.bot_data.get('mongodb_available', False):
             try:
-                notification_checker = NotificationChecker(application.bot, interval=30)
+                notification_checker = NotificationChecker(
+                    application.bot, 
+                    interval=30,
+                    bot_data=application.bot_data
+                )
                 await notification_checker.start()
                 # Store reference for cleanup
                 application.notification_checker = notification_checker
-                print("✅ Notification checker started")
+                print("✅ Notification checker started (with availability refresh)")
             except Exception as e:
                 print(f"⚠️ Notification checker failed to start: {e}")
         else:

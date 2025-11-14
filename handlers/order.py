@@ -314,6 +314,19 @@ async def select_samsa(update, context):
     
     try:
         key = q.data.split(':', 1)[1]
+        
+        # Check if item is available
+        if not context.bot_data.get('avail', {}).get(key, False):
+            await q.answer(
+                get_lang_text(
+                    context,
+                    "❌ Этот товар временно недоступен",
+                    "❌ Bu mahsulot vaqtincha mavjud emas"
+                ),
+                show_alert=True
+            )
+            return ITEM_SELECT
+        
         context.user_data['current_item'] = key
         items = context.user_data.setdefault('items', {})
         qty = items.get(key, 0)
@@ -833,6 +846,18 @@ async def select_packaging(update, context):
     await q.answer()
     
     key = q.data.split(':', 1)[1]
+    
+    # Check if packaging is available
+    if not context.bot_data.get('avail', {}).get(key, False):
+        await q.answer(
+            get_lang_text(
+                context,
+                "❌ Эта упаковка временно недоступна",
+                "❌ Bu qadoqlash vaqtincha mavjud emas"
+            ),
+            show_alert=True
+        )
+        return PACKAGING_SELECT
     
     # Add to cart
     items = context.user_data.setdefault('items', {})
