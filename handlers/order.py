@@ -1478,8 +1478,8 @@ async def order_confirm(update, context):
                     order_status = 'new'
                     status_message = get_lang_text(
                         context,
-                        '⏳ Заказ отправлен на подтверждение администратором. Ожидайте проверки оплаты.',
-                        '⏳ Buyurtma administrator tasdigʻiga yuborildi. Toʻlov tekshirilishini kuting.'
+                        '🙏 Благодарим Вас за заказ!\n\n⏳ Заказ отправлен на подтверждение администратором. Ожидайте проверки оплаты.',
+                        '🙏 Buyurtmangiz uchun rahmat!\n\n⏳ Buyurtma administrator tasdigʻiga yuborildi. Toʻlov tekshirilishini kuting.'
                     )
                 else:
                     order_status = 'payment_failed'
@@ -1492,8 +1492,8 @@ async def order_confirm(update, context):
                 order_status = 'new'
                 status_message = get_lang_text(
                     context,
-                    '🎉 Ваш заказ принят! С вами скоро свяжутся.',
-                    '🎉 Buyurtmangiz qabul qilindi! Tez orada siz bilan bogʻlanamiz.'
+                    '🙏 Благодарим Вас за заказ!\n\n🎉 Ваш заказ принят! С вами скоро свяжутся.',
+                    '🙏 Buyurtmangiz uchun rahmat!\n\n🎉 Buyurtmangiz qabul qilindi! Tez orada siz bilan bogʻlanamiz.'
                 )
 
             if context.bot_data.get('mongodb_available', True):
